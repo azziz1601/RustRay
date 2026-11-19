@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">RustRay</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="profiles">Profiles</string>
+    <string name="import_from_clipboard">Import from clipboard</string>
+</resources>

@@ -1,0 +1,47 @@
+name: Build RustRay APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Prepare Release Configuration
+        env:
+          RELEASE_DATA: ${{ secrets.RELEASE_DATA }}
+          RELEASE_CONFIG: ${{ secrets.RELEASE_CONFIG }}
+        run: |
+          if [ -n "$RELEASE_DATA" ] && [ -n "$RELEASE_CONFIG" ]; then
+            echo "$RELEASE_DATA" | base64 -d > release.bin
+            printf "%s\n" "$RELEASE_CONFIG" > release.properties
+          fi
+
+      - name: Build Release APKs
+        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease --no-daemon
+
+      - name: Upload Release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustray-apks
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
