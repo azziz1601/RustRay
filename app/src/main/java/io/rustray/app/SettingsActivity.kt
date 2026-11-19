@@ -1,9 +1,11 @@
 package io.rustray.app
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -15,6 +17,7 @@ import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import org.xrayrust.mobile.XrayTunInterface
+import rikka.shizuku.Shizuku
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -27,6 +30,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var ddRuntimeProfile: MaterialAutoCompleteTextView
     private lateinit var swIpv6: MaterialSwitch
     private lateinit var swRebind: MaterialSwitch
+    private lateinit var swBindUnderlying: MaterialSwitch
     private lateinit var swSniffing: MaterialSwitch
     private lateinit var swSniffingMetadata: MaterialSwitch
     private lateinit var swFakeIp: MaterialSwitch
@@ -34,11 +38,36 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var ddQueryStrategy: MaterialAutoCompleteTextView
     private lateinit var ddSplitMode: MaterialAutoCompleteTextView
     private lateinit var btnPickApps: MaterialButton
+    private lateinit var tvSplitSummary: TextView
+    private lateinit var tvShizukuStatus: TextView
+    private lateinit var tvCaptiveState: TextView
+    private lateinit var btnShizukuPerm: MaterialButton
+    private lateinit var swShizukuAuto: MaterialSwitch
+    private lateinit var btnCaptiveOff: MaterialButton
+    private lateinit var btnCaptiveOn: MaterialButton
 
     private var selectedProfile: TunProfileOption = TunProfileOption.MOBILE_PLUS
     private var selectedQueryStrategy: String = "UseIPv4"
     private var selectedSplitMode: SplitTunnelMode = SplitTunnelMode.ALL
     private val selectedApps = linkedSetOf<String>()
+
+    private val shizukuPermListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        if (requestCode == REQ_SHIZUKU) {
+            runOnUiThread {
+                val msg = if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    "Izin Shizuku aktif"
+                } else {
+                    "Izin Shizuku ditolak"
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                refreshShizukuUi()
+            }
+        }
+    }
+
+    private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
+        runOnUiThread { refreshShizukuUi() }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,17 +91,39 @@ class SettingsActivity : AppCompatActivity() {
 
         btnPresetGaming.setOnClickListener {
             loadIntoUi(AppSettings.gamingPreset(selectedApps.toSet(), selectedSplitMode))
-            Toast.makeText(this, "Preset Game diterapkan (tekan centang untuk simpan)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Mode Game diterapkan. Tekan centang untuk menyimpan.", Toast.LENGTH_SHORT).show()
         }
         btnPresetDefault.setOnClickListener {
             loadIntoUi(AppSettings())
-            Toast.makeText(this, "Reset ke default (tekan centang untuk simpan)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Setelan standar diterapkan. Tekan centang untuk menyimpan.", Toast.LENGTH_SHORT).show()
         }
         swSniffing.setOnCheckedChangeListener { _, checked ->
-            swSniffingMetadata.isEnabled = checked
+            swSniffingMetadata.visibility = if (checked) View.VISIBLE else View.GONE
             if (!checked) swSniffingMetadata.isChecked = false
         }
         btnPickApps.setOnClickListener { showAppPicker() }
+
+        runCatching {
+            Shizuku.addRequestPermissionResultListener(shizukuPermListener)
+            Shizuku.addBinderReceivedListenerSticky(shizukuBinderListener)
+        }
+        btnShizukuPerm.setOnClickListener { requestShizukuPermission() }
+        btnCaptiveOff.setOnClickListener { applyManualCaptivePortal(0) }
+        btnCaptiveOn.setOnClickListener { applyManualCaptivePortal(1) }
+        refreshShizukuUi()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshShizukuUi()
+    }
+
+    override fun onDestroy() {
+        runCatching {
+            Shizuku.removeRequestPermissionResultListener(shizukuPermListener)
+            Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+        }
+        super.onDestroy()
     }
 
     private fun bindViews() {
@@ -83,6 +134,7 @@ class SettingsActivity : AppCompatActivity() {
         ddRuntimeProfile = findViewById(R.id.ddRuntimeProfile)
         swIpv6 = findViewById(R.id.swIpv6)
         swRebind = findViewById(R.id.swRebind)
+        swBindUnderlying = findViewById(R.id.swBindUnderlying)
         swSniffing = findViewById(R.id.swSniffing)
         swSniffingMetadata = findViewById(R.id.swSniffingMetadata)
         swFakeIp = findViewById(R.id.swFakeIp)
@@ -90,6 +142,13 @@ class SettingsActivity : AppCompatActivity() {
         ddQueryStrategy = findViewById(R.id.ddQueryStrategy)
         ddSplitMode = findViewById(R.id.ddSplitMode)
         btnPickApps = findViewById(R.id.btnPickApps)
+        tvSplitSummary = findViewById(R.id.tvSplitSummary)
+        tvShizukuStatus = findViewById(R.id.tvShizukuStatus)
+        tvCaptiveState = findViewById(R.id.tvCaptiveState)
+        btnShizukuPerm = findViewById(R.id.btnShizukuPerm)
+        swShizukuAuto = findViewById(R.id.swShizukuAuto)
+        btnCaptiveOff = findViewById(R.id.btnCaptiveOff)
+        btnCaptiveOn = findViewById(R.id.btnCaptiveOn)
     }
 
     private fun applyInsets() {
@@ -126,7 +185,7 @@ class SettingsActivity : AppCompatActivity() {
         )
         ddSplitMode.setOnItemClickListener { _, _, position, _ ->
             selectedSplitMode = splitModes[position]
-            updateSplitButton()
+            updateSplitUi()
         }
     }
 
@@ -136,8 +195,10 @@ class SettingsActivity : AppCompatActivity() {
         ddRuntimeProfile.setText(selectedProfile.label, false)
         swIpv6.isChecked = settings.ipv6Route
         swRebind.isChecked = settings.networkRebind
+        swBindUnderlying.isChecked = settings.bindUnderlyingNetwork
+        swShizukuAuto.isChecked = settings.shizukuAutoCaptivePortal
         swSniffing.isChecked = settings.sniffingEnabled
-        swSniffingMetadata.isEnabled = settings.sniffingEnabled
+        swSniffingMetadata.visibility = if (settings.sniffingEnabled) View.VISIBLE else View.GONE
         swSniffingMetadata.isChecked = settings.sniffingEnabled && settings.sniffingMetadataOnly
         swFakeIp.isChecked = settings.fakeIpEnabled
         etDnsServers.setText(settings.dnsServers)
@@ -147,12 +208,27 @@ class SettingsActivity : AppCompatActivity() {
         ddSplitMode.setText(selectedSplitMode.label, false)
         selectedApps.clear()
         selectedApps.addAll(settings.splitTunnelApps)
-        updateSplitButton()
+        updateSplitUi()
     }
 
-    private fun updateSplitButton() {
-        btnPickApps.isEnabled = selectedSplitMode != SplitTunnelMode.ALL
-        btnPickApps.text = "Pilih Aplikasi (${selectedApps.size} terpilih)"
+    private fun updateSplitUi() {
+        val showPicker = selectedSplitMode != SplitTunnelMode.ALL
+        btnPickApps.visibility = if (showPicker) View.VISIBLE else View.GONE
+        val count = selectedApps.size
+        tvSplitSummary.text = when (selectedSplitMode) {
+            SplitTunnelMode.ALL -> "Semua aplikasi menggunakan koneksi VPN."
+            SplitTunnelMode.BYPASS -> if (count == 0) {
+                "Belum ada aplikasi dikecualikan."
+            } else {
+                "$count aplikasi dikecualikan dari VPN."
+            }
+
+            SplitTunnelMode.ONLY_SELECTED -> if (count == 0) {
+                "Belum ada aplikasi dipilih."
+            } else {
+                "Hanya $count aplikasi yang menggunakan VPN."
+            }
+        }
     }
 
     private fun showAppPicker() {
@@ -172,7 +248,7 @@ class SettingsActivity : AppCompatActivity() {
             )
 
         if (resolved.isEmpty()) {
-            Toast.makeText(this, "Tidak ada aplikasi yang dapat dipilih", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Tidak ada aplikasi yang dapat dipilih.", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -187,14 +263,14 @@ class SettingsActivity : AppCompatActivity() {
             .setNegativeButton("Batal", null)
             .setNeutralButton("Kosongkan") { _, _ ->
                 selectedApps.clear()
-                updateSplitButton()
+                updateSplitUi()
             }
             .setPositiveButton("Terapkan") { _, _ ->
                 selectedApps.clear()
                 for (index in resolved.indices) {
                     if (checked[index]) selectedApps.add(resolved[index].first)
                 }
-                updateSplitButton()
+                updateSplitUi()
             }
             .show()
     }
@@ -204,7 +280,7 @@ class SettingsActivity : AppCompatActivity() {
         if (mtu == null || mtu !in XrayTunInterface.MIN_MTU..XrayTunInterface.MAX_MTU) {
             Toast.makeText(
                 this,
-                "MTU harus antara ${XrayTunInterface.MIN_MTU} sampai ${XrayTunInterface.MAX_MTU}",
+                "MTU harus antara ${XrayTunInterface.MIN_MTU} hingga ${XrayTunInterface.MAX_MTU}.",
                 Toast.LENGTH_SHORT,
             ).show()
             return
@@ -213,16 +289,8 @@ class SettingsActivity : AppCompatActivity() {
         val dnsRaw = etDnsServers.text?.toString()?.trim().orEmpty()
         val fakeIp = swFakeIp.isChecked
         if (!fakeIp && dnsRaw.isBlank()) {
-            Toast.makeText(this, "Isi minimal 1 DNS server jika FakeIP dimatikan", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Isi minimal satu server DNS saat FakeIP mati.", Toast.LENGTH_SHORT).show()
             return
-        }
-
-        if (selectedSplitMode != SplitTunnelMode.ALL && selectedApps.isEmpty()) {
-            Toast.makeText(
-                this,
-                "Belum ada aplikasi terpilih; mode Split Tunneling tetap disimpan tetapi akan memakai semua aplikasi sampai ada yang dipilih",
-                Toast.LENGTH_LONG,
-            ).show()
         }
 
         val updated = AppSettings(
@@ -230,6 +298,8 @@ class SettingsActivity : AppCompatActivity() {
             runtimeProfile = selectedProfile,
             ipv6Route = swIpv6.isChecked,
             networkRebind = swRebind.isChecked,
+            bindUnderlyingNetwork = swBindUnderlying.isChecked,
+            shizukuAutoCaptivePortal = swShizukuAuto.isChecked,
             sniffingEnabled = swSniffing.isChecked,
             sniffingMetadataOnly = swSniffing.isChecked && swSniffingMetadata.isChecked,
             fakeIpEnabled = fakeIp,
@@ -242,11 +312,66 @@ class SettingsActivity : AppCompatActivity() {
 
         val active = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
         val note = if (active) {
-            "Pengaturan disimpan. Disconnect lalu Connect ulang agar berlaku."
+            "Pengaturan disimpan. Sambungkan ulang VPN agar perubahan berlaku."
         } else {
             "Pengaturan disimpan."
         }
         Toast.makeText(this, note, Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    private fun refreshShizukuUi() {
+        val status = ShizukuCaptivePortal.status()
+        tvShizukuStatus.text = when (status) {
+            ShizukuCaptivePortal.Status.READY -> "Shizuku siap digunakan"
+            ShizukuCaptivePortal.Status.NO_PERMISSION -> "Shizuku aktif, menunggu izin"
+            ShizukuCaptivePortal.Status.NOT_RUNNING -> "Layanan Shizuku tidak aktif"
+        }
+        tvCaptiveState.text = ShizukuCaptivePortal.humanStateSummary(this)
+        btnShizukuPerm.visibility = if (status == ShizukuCaptivePortal.Status.NO_PERMISSION) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        val ready = status == ShizukuCaptivePortal.Status.READY
+        btnCaptiveOff.isEnabled = ready
+        btnCaptiveOn.isEnabled = ready
+    }
+
+    private fun requestShizukuPermission() {
+        when (ShizukuCaptivePortal.status()) {
+            ShizukuCaptivePortal.Status.NOT_RUNNING -> {
+                Toast.makeText(this, "Jalankan Shizuku terlebih dahulu.", Toast.LENGTH_SHORT).show()
+            }
+
+            ShizukuCaptivePortal.Status.READY -> {
+                Toast.makeText(this, "Izin Shizuku sudah aktif.", Toast.LENGTH_SHORT).show()
+            }
+
+            ShizukuCaptivePortal.Status.NO_PERMISSION -> {
+                runCatching { Shizuku.requestPermission(REQ_SHIZUKU) }
+                    .onFailure {
+                        Toast.makeText(this, "Gagal meminta izin Shizuku.", Toast.LENGTH_SHORT).show()
+                    }
+            }
+        }
+    }
+
+    private fun applyManualCaptivePortal(value: Int) {
+        ShizukuCaptivePortal.setManualAsync(value) { ok ->
+            runOnUiThread {
+                val msg = if (ok) {
+                    if (value == 0) "Captive portal dinonaktifkan." else "Captive portal dipulihkan."
+                } else {
+                    "Gagal menjalankan perintah lewat Shizuku."
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                refreshShizukuUi()
+            }
+        }
+    }
+
+    companion object {
+        private const val REQ_SHIZUKU = 9101
     }
 }

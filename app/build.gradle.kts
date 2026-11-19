@@ -5,13 +5,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val releasePropertiesFile = rootProject.file("release.properties")
-val releaseProperties = Properties().apply {
-    if (releasePropertiesFile.exists()) {
-        releasePropertiesFile.inputStream().use { load(it) }
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
     }
 }
-val hasReleaseConfig = releasePropertiesFile.exists() && rootProject.file("release.bin").exists()
+val hasReleaseSigning = keystorePropertiesFile.exists() && rootProject.file("rustray-release.jks").exists()
 
 android {
     namespace = "io.rustray.app"
@@ -36,12 +36,12 @@ android {
     }
 
     signingConfigs {
-        if (hasReleaseConfig) {
+        if (hasReleaseSigning) {
             create("release") {
-                storeFile = rootProject.file("release.bin")
-                storePassword = releaseProperties.getProperty("storePassword")
-                keyAlias = releaseProperties.getProperty("keyAlias")
-                keyPassword = releaseProperties.getProperty("keyPassword")
+                storeFile = rootProject.file("rustray-release.jks")
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
             }
         }
     }
@@ -50,7 +50,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            if (hasReleaseConfig) {
+            if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -85,4 +85,6 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("io.github.aimalygin:xray-rust-mobile:0.10.0")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

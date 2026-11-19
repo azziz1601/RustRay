@@ -76,6 +76,9 @@ class AppVpnService : XrayVpnService() {
         VpnState.connecting(profile)
         EventLog.add("Starting ${profile.protocol.label} profile '${profile.name}' -> ${profile.endpoint()}")
         EventLog.add(settingsSummary(settings))
+        if (settings.shizukuAutoCaptivePortal) {
+            ShizukuCaptivePortal.applyOnVpnStartAsync(this)
+        }
         startForegroundCompat(progressNotification("Connecting…", profile))
 
         val config = try {
@@ -150,6 +153,7 @@ class AppVpnService : XrayVpnService() {
         EventLog.add("Stopping tunnel")
         runCatching { stopXrayTunnel() }
             .onFailure { EventLog.add("Stop failed: ${safeMessage(it)}") }
+        ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.stopped()
         currentProfile = null
         stopForegroundCompat()
@@ -157,7 +161,11 @@ class AppVpnService : XrayVpnService() {
     }
 
     override fun onXrayTunnelStarted() {
-        bindActiveUnderlyingNetwork()
+        if (activeSettings.bindUnderlyingNetwork) {
+            bindActiveUnderlyingNetwork()
+        } else {
+            runCatching { setUnderlyingNetworks(null) }
+        }
         val profile = currentProfile
         VpnState.connected()
         EventLog.add("Tunnel started")
@@ -195,7 +203,11 @@ class AppVpnService : XrayVpnService() {
         previous: Network?,
     ): Network? {
         val chosen = super.selectUnderlyingNetwork(candidates, previous)
-        runCatching { setUnderlyingNetworks(chosen?.let { arrayOf(it) }) }
+        if (activeSettings.bindUnderlyingNetwork) {
+            runCatching { setUnderlyingNetworks(chosen?.let { arrayOf(it) }) }
+        } else {
+            runCatching { setUnderlyingNetworks(null) }
+        }
         return chosen
     }
 
@@ -232,6 +244,7 @@ class AppVpnService : XrayVpnService() {
     override fun onRevoke() {
         EventLog.add("VPN permission revoked by the system")
         runCatching { stopXrayTunnel() }
+        ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.failed("VPN access was revoked")
         currentProfile = null
         stopForegroundCompat()
@@ -261,10 +274,12 @@ class AppVpnService : XrayVpnService() {
         val dns = if (settings.fakeIpEnabled) "FakeIP" else "DNS(${settings.parsedDnsServers().ifEmpty { listOf("1.1.1.1") }.joinToString(",")})"
         val sniff = if (settings.sniffingEnabled) "Sniff:on" else "Sniff:off"
         val ipv6 = if (settings.ipv6Route) "IPv6:on" else "IPv6:off"
-        return "Tuning: MTU ${settings.tunMtu} · ${settings.runtimeProfile.name} · $ipv6 · $sniff · $dns · $split"
+        val bind = if (settings.bindUnderlyingNetwork) "Bind:on" else "Bind:off"
+        return "Tuning: MTU ${settings.tunMtu} · ${settings.runtimeProfile.name} · $ipv6 · $bind · $sniff · $dns · $split"
     }
 
     private fun fail(message: String) {
+        ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.failed(message)
         EventLog.add("Connection failed: $message")
         // Leave a dismissible failure notification so a background start is visible.

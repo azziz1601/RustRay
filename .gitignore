@@ -6,6 +6,6 @@ app/build/
 *.iml
 local.properties
 *.apk
-release.bin
-release.properties
+*.jks
+keystore.properties
 .DS_Store

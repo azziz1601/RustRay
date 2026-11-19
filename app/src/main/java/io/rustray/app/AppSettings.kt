@@ -5,11 +5,11 @@ import org.xrayrust.mobile.XrayTunInterface
 import org.xrayrust.mobile.XrayTunRuntimeProfile
 
 enum class TunProfileOption(val wire: String, val label: String) {
-    MOBILE_PLUS("mobile_plus", "MobilePlus (Seimbang)"),
-    THROUGHPUT("throughput", "Throughput (Gaming / Tinggi)"),
-    MOBILE("mobile", "Mobile (Hemat)"),
+    MOBILE_PLUS("mobile_plus", "MobilePlus"),
+    THROUGHPUT("throughput", "Throughput"),
+    MOBILE("mobile", "Mobile"),
     DEFAULT("default", "Default"),
-    LOW_MEMORY("low_memory", "LowMemory (RAM Kecil)"),
+    LOW_MEMORY("low_memory", "LowMemory"),
     DESKTOP("desktop", "Desktop");
 
     fun toSdk(): XrayTunRuntimeProfile = when (this) {
@@ -29,8 +29,8 @@ enum class TunProfileOption(val wire: String, val label: String) {
 
 enum class SplitTunnelMode(val wire: String, val label: String) {
     ALL("all", "Semua aplikasi"),
-    BYPASS("bypass", "Bypass aplikasi terpilih"),
-    ONLY_SELECTED("only_selected", "Hanya aplikasi terpilih (Mode Game)");
+    BYPASS("bypass", "Kecualikan aplikasi terpilih"),
+    ONLY_SELECTED("only_selected", "Hanya aplikasi terpilih");
 
     companion object {
         fun fromWire(value: String?): SplitTunnelMode =
@@ -43,6 +43,8 @@ data class AppSettings(
     val runtimeProfile: TunProfileOption = TunProfileOption.MOBILE_PLUS,
     val ipv6Route: Boolean = false,
     val networkRebind: Boolean = true,
+    val bindUnderlyingNetwork: Boolean = true,
+    val shizukuAutoCaptivePortal: Boolean = false,
     val sniffingEnabled: Boolean = true,
     val sniffingMetadataOnly: Boolean = false,
     val fakeIpEnabled: Boolean = true,
@@ -72,6 +74,8 @@ data class AppSettings(
                 runtimeProfile = TunProfileOption.THROUGHPUT,
                 ipv6Route = false,
                 networkRebind = true,
+                bindUnderlyingNetwork = true,
+                shizukuAutoCaptivePortal = false,
                 sniffingEnabled = false,
                 sniffingMetadataOnly = false,
                 fakeIpEnabled = false,
@@ -92,6 +96,8 @@ class SettingsStore(context: Context) {
         runtimeProfile = TunProfileOption.fromWire(prefs.getString(KEY_RUNTIME_PROFILE, null)),
         ipv6Route = prefs.getBoolean(KEY_IPV6_ROUTE, false),
         networkRebind = prefs.getBoolean(KEY_NETWORK_REBIND, true),
+        bindUnderlyingNetwork = prefs.getBoolean(KEY_BIND_UNDERLYING, true),
+        shizukuAutoCaptivePortal = prefs.getBoolean(KEY_SHIZUKU_AUTO_CAPTIVE, false),
         sniffingEnabled = prefs.getBoolean(KEY_SNIFFING_ENABLED, true),
         sniffingMetadataOnly = prefs.getBoolean(KEY_SNIFFING_METADATA_ONLY, false),
         fakeIpEnabled = prefs.getBoolean(KEY_FAKE_IP_ENABLED, true),
@@ -113,6 +119,8 @@ class SettingsStore(context: Context) {
             .putString(KEY_RUNTIME_PROFILE, settings.runtimeProfile.wire)
             .putBoolean(KEY_IPV6_ROUTE, settings.ipv6Route)
             .putBoolean(KEY_NETWORK_REBIND, settings.networkRebind)
+            .putBoolean(KEY_BIND_UNDERLYING, settings.bindUnderlyingNetwork)
+            .putBoolean(KEY_SHIZUKU_AUTO_CAPTIVE, settings.shizukuAutoCaptivePortal)
             .putBoolean(KEY_SNIFFING_ENABLED, settings.sniffingEnabled)
             .putBoolean(KEY_SNIFFING_METADATA_ONLY, settings.sniffingMetadataOnly)
             .putBoolean(KEY_FAKE_IP_ENABLED, settings.fakeIpEnabled)
@@ -128,6 +136,8 @@ class SettingsStore(context: Context) {
         private const val KEY_RUNTIME_PROFILE = "runtime_profile"
         private const val KEY_IPV6_ROUTE = "ipv6_route"
         private const val KEY_NETWORK_REBIND = "network_rebind"
+        private const val KEY_BIND_UNDERLYING = "bind_underlying_network"
+        private const val KEY_SHIZUKU_AUTO_CAPTIVE = "shizuku_auto_captive"
         private const val KEY_SNIFFING_ENABLED = "sniffing_enabled"
         private const val KEY_SNIFFING_METADATA_ONLY = "sniffing_metadata_only"
         private const val KEY_FAKE_IP_ENABLED = "fake_ip_enabled"

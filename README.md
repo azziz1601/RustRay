@@ -30,7 +30,12 @@ Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
   number of active connections.
 - View a simple event log from the toolbar.
 - Reconnect automatically when the network changes (for example Wi-Fi to
-  mobile data) and keep traffic bound to the active non-VPN network.
+  mobile data) and optionally keep traffic bound to the active non-VPN network.
+- Tune the tunnel from the Settings screen: runtime profile, MTU, IPv6 route,
+  DNS/FakeIP, sniffing, and per-app split tunneling (include or exclude apps).
+- Optionally use [Shizuku](https://shizuku.rikka.app/) to disable Android's
+  captive-portal probe while the VPN is active and restore the previous values
+  when it disconnects. This is off by default.
 - Offer a gaming preset with a 1380 MTU and throughput-oriented tuning.
 - Build the TUN configuration locally with fake-IP DNS, direct routing for
   private addresses, and HTTP/TLS/QUIC sniffing.
@@ -68,6 +73,21 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 
 The APKs are written to `app/build/outputs/apk/release/`.
 
+### Release signing
+
+The release build uses `rustray-release.jks` plus `keystore.properties`. Both
+files are intentionally **not tracked** in this public repository.
+
+- Locally: place both files in the project root before running `assembleRelease`.
+- In GitHub Actions: store the keystore as repository secret `KEYSTORE_BASE64`
+  (base64 of the `.jks` file) and its properties as `KEYSTORE_PROPERTIES`
+  (contents of `keystore.properties`). The workflow decodes them at build time.
+  `storePassword`, `keyAlias`, and `keyPassword` must match the keystore.
+
+Without those files the build still succeeds, but the APK is unsigned and cannot
+upgrade an existing signed installation. Keep the keystore safe: anyone holding
+it can produce APKs that devices treat as official updates.
+
 ## Known limitations
 
 - REALITY does not work over WebSocket or HTTPUpgrade with the current core;
@@ -78,8 +98,9 @@ The APKs are written to `app/build/outputs/apk/release/`.
   to public hosts, so RustRay uses a single-label DNS alias and a `dns.hosts`
   entry to keep those links working. Only use this with providers that
   intentionally issue plaintext links.
-- Subscription URLs, latency checks, and per-app split tunneling are not
-  implemented yet.
+- Subscription URLs and latency checks are not implemented yet.
+- Shizuku-based captive-portal control requires Shizuku to be installed and
+  granted to RustRay; it is disabled by default.
 - The release build has been verified for compilation, lint, APK signing v2,
   and zipalign, but it has not been tested on a physical device or emulator.
 
@@ -91,6 +112,9 @@ The APKs are written to `app/build/outputs/apk/release/`.
 | `Profile.kt` / `ProfileStore.kt` | Profile model and local storage |
 | `ConfigBuilder.kt` | Builds the TUN JSON configuration for manual profiles |
 | `PlaintextVlessCompat.kt` | DNS alias compatibility for plaintext VLESS links |
+| `AppSettings.kt` | Settings model, presets, and persistence |
+| `SettingsActivity.kt` | Settings UI: tuning, DNS, split tunneling, Shizuku controls |
+| `ShizukuCaptivePortal.kt` | Optional captive-portal disable/restore via Shizuku |
 | `MainActivity.kt` | Home screen, connect button, profile list, clipboard import, event log |
 | `EditProfileActivity.kt` | Profile editor (protocol, credentials, transport, security) |
 
@@ -100,3 +124,4 @@ The APKs are written to `app/build/outputs/apk/release/`.
   [xray-rust-mobile](https://github.com/aimalygin/xray-rust-mobile) by
   [@aimalygin](https://github.com/aimalygin)
 - [XTLS/Xray-core](https://github.com/XTLS/Xray-core) as the reference project
+- [Shizuku](https://github.com/RikkaApps/Shizuku) for optional privileged helpers

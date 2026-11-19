@@ -26,14 +26,14 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Prepare Release Configuration
+      - name: Decode Release Keystore (If Configured)
         env:
-          RELEASE_DATA: ${{ secrets.RELEASE_DATA }}
-          RELEASE_CONFIG: ${{ secrets.RELEASE_CONFIG }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PROPS: ${{ secrets.KEYSTORE_PROPERTIES }}
         run: |
-          if [ -n "$RELEASE_DATA" ] && [ -n "$RELEASE_CONFIG" ]; then
-            echo "$RELEASE_DATA" | base64 -d > release.bin
-            printf "%s\n" "$RELEASE_CONFIG" > release.properties
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PROPS" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > rustray-release.jks
+            printf "%s\n" "$KEYSTORE_PROPS" > keystore.properties
           fi
 
       - name: Build Release APKs
