@@ -30,7 +30,8 @@ Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
   number of active connections.
 - View a simple event log from the toolbar.
 - Reconnect automatically when the network changes (for example Wi-Fi to
-  mobile data).
+  mobile data) and keep traffic bound to the active non-VPN network.
+- Offer a gaming preset with a 1380 MTU and throughput-oriented tuning.
 - Build the TUN configuration locally with fake-IP DNS, direct routing for
   private addresses, and HTTP/TLS/QUIC sniffing.
 
@@ -47,7 +48,7 @@ Every push to `main` builds release APKs with GitHub Actions.
 
 You can also trigger a build manually with **Run workflow** on the Actions page.
 
-The package name is `io.rustray.app`, version 1.1.0 (`versionCode` 2),
+The package name is `io.rustray.app`, version 1.1.0 (`versionCode` 3),
 `minSdk` 24, and `targetSdk` 35.
 
 ## Build it yourself

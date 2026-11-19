@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -16,6 +19,7 @@ import androidx.core.content.ContextCompat
 import org.xrayrust.mobile.XrayCoreException
 import org.xrayrust.mobile.XrayNetworkRebindResult
 import org.xrayrust.mobile.XrayTunInterface
+import org.xrayrust.mobile.XrayUnderlyingNetwork
 import org.xrayrust.mobile.XrayVpnRuntimeSnapshot
 import org.xrayrust.mobile.XrayVpnService
 
@@ -153,6 +157,7 @@ class AppVpnService : XrayVpnService() {
     }
 
     override fun onXrayTunnelStarted() {
+        bindActiveUnderlyingNetwork()
         val profile = currentProfile
         VpnState.connected()
         EventLog.add("Tunnel started")
@@ -184,6 +189,37 @@ class AppVpnService : XrayVpnService() {
     }
 
     override fun networkChangeRebindEnabled(): Boolean = activeSettings.networkRebind
+
+    override fun selectUnderlyingNetwork(
+        candidates: List<XrayUnderlyingNetwork>,
+        previous: Network?,
+    ): Network? {
+        val chosen = super.selectUnderlyingNetwork(candidates, previous)
+        runCatching { setUnderlyingNetworks(chosen?.let { arrayOf(it) }) }
+        return chosen
+    }
+
+    private fun bindActiveUnderlyingNetwork() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val active = cm.activeNetwork
+        val caps = active?.let { cm.getNetworkCapabilities(it) }
+        val chosen = if (active != null &&
+            caps != null &&
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        ) {
+            active
+        } else {
+            @Suppress("DEPRECATION")
+            cm.allNetworks.firstOrNull { net ->
+                val c = cm.getNetworkCapabilities(net) ?: return@firstOrNull false
+                !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }
+        }
+        runCatching { setUnderlyingNetworks(chosen?.let { arrayOf(it) }) }
+    }
 
     override fun onXrayNetworkRebind(result: XrayNetworkRebindResult) {
         EventLog.add("Network changed · tunnel rebind requested (generation ${result.sessionGeneration})")

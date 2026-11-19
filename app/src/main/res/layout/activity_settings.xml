@@ -71,7 +71,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="Preset Game menyetel MTU 1280, profil Throughput, matikan IPv6, Sniffing, dan FakeIP agar ping lebih stabil dan minim jitter."
+                android:text="Preset Game menyetel MTU 1380, profil Throughput, matikan IPv6, Sniffing, dan FakeIP agar ping lebih stabil dan minim jitter."
                 android:textColor="@color/text_dim"
                 android:textSize="12sp" />
 
@@ -88,7 +88,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:hint="TUN MTU (1280–9000)"
-                app:helperText="1280 disarankan untuk game/seluler agar bebas fragmentasi UDP"
+                app:helperText="1380–1480 disarankan untuk game online (seperti Minecraft)"
                 app:helperTextTextColor="@color/text_dim">
 
                 <com.google.android.material.textfield.TextInputEditText

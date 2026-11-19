@@ -63,11 +63,12 @@ data class AppSettings(
 
     companion object {
         const val DEFAULT_DNS_SERVERS = "1.1.1.1, 8.8.8.8"
+        const val GAMING_MTU = 1380
         val QUERY_STRATEGIES = listOf("UseIPv4", "UseIP", "UseIPv6")
 
         fun gamingPreset(existingApps: Set<String>, existingMode: SplitTunnelMode): AppSettings =
             AppSettings(
-                tunMtu = XrayTunInterface.MIN_MTU,
+                tunMtu = GAMING_MTU,
                 runtimeProfile = TunProfileOption.THROUGHPUT,
                 ipv6Route = false,
                 networkRebind = true,
