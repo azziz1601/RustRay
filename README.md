@@ -1,6 +1,7 @@
 # RustRay
 
 [![Build RustRay APK](https://github.com/azziz1601/RustRay/actions/workflows/build.yml/badge.svg)](https://github.com/azziz1601/RustRay/actions/workflows/build.yml)
+[![Downloads](https://img.shields.io/github/downloads/azziz1601/RustRay/total?label=downloads)](https://github.com/azziz1601/RustRay/releases)
 
 <p align="center">
   <img src="docs/ic_launcher.png" alt="RustRay app icon" width="128" height="128">
