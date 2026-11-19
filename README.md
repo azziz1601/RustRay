@@ -2,6 +2,10 @@
 
 [![Build RustRay APK](https://github.com/azziz1601/RustRay/actions/workflows/build.yml/badge.svg)](https://github.com/azziz1601/RustRay/actions/workflows/build.yml)
 
+<p align="center">
+  <img src="docs/ic_launcher.png" alt="RustRay app icon" width="128" height="128">
+</p>
+
 RustRay is a small Android VPN client for V2Ray-style proxy links. It uses the
 [xray-rust-mobile](https://github.com/aimalygin/xray-rust-mobile) library, a
 Rust implementation of Xray that is designed for mobile clients.
