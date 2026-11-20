@@ -7,6 +7,8 @@ pub struct BridgeStats {
     pub udp_assoc_opened: AtomicU64,
     pub udp_tx_packets: AtomicU64,
     pub udp_rx_packets: AtomicU64,
+    pub udpgw_written_bytes: AtomicU64,
+    pub udpgw_raw_rx_bytes: AtomicU64,
     pub udp_domain_resolved: AtomicU64,
     pub udp_domain_failed: AtomicU64,
     udpgw_status: Mutex<String>,
@@ -21,6 +23,8 @@ impl BridgeStats {
             udp_assoc_opened: AtomicU64::new(0),
             udp_tx_packets: AtomicU64::new(0),
             udp_rx_packets: AtomicU64::new(0),
+            udpgw_written_bytes: AtomicU64::new(0),
+            udpgw_raw_rx_bytes: AtomicU64::new(0),
             udp_domain_resolved: AtomicU64::new(0),
             udp_domain_failed: AtomicU64::new(0),
             udpgw_status: Mutex::new("initializing".to_string()),
@@ -57,8 +61,10 @@ impl BridgeStats {
             format!(" | last_err={last_err}")
         };
         format!(
-            "SSH Engine: udpgw={} | tcp_ok={} tcp_err={} | udp_assoc={} tx={} rx={} | dns_ok={} dns_err={}{}",
+            "SSH Engine: udpgw={} (txB={} rxB={}) | tcp_ok={} tcp_err={} | udp_assoc={} tx={} rx={} | dns_ok={} dns_err={}{}",
             status,
+            self.udpgw_written_bytes.load(Ordering::Relaxed),
+            self.udpgw_raw_rx_bytes.load(Ordering::Relaxed),
             self.tcp_opened.load(Ordering::Relaxed),
             self.tcp_failed.load(Ordering::Relaxed),
             self.udp_assoc_opened.load(Ordering::Relaxed),

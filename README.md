@@ -18,7 +18,7 @@ Supported link formats:
 - `trojan://`
 
 Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
-Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and SSL+WebSocket modes with pooled connections, per-destination UDPGW channels, remote UDPGW DNS, live engine telemetry, and optional HTTP upstream proxy.
+Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and SSL+WebSocket modes with pooled connections, per-destination UDPGW channels, lock-free native UDPGW I/O, remote DNS, live engine telemetry, and optional HTTP upstream proxy.
 
 > RustRay uses **xray-rust**, an independent, client-only Rust reimplementation.
 > It is not the official XTLS Go [Xray-core](https://github.com/XTLS/Xray-core)
@@ -46,9 +46,10 @@ Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and
 - Build the TUN configuration locally with fake-IP DNS, direct routing for
   private addresses, and HTTP/TLS/QUIC sniffing.
 - Run SSH accounts through a native Rust bridge with a local SOCKS5 endpoint,
-  seven transport modes, per-destination UDPGW channels, HTTP Custom upstream
-  proxies (`host:port` or `host:port@user:pass`), automatic fallback to the
-  primary session, and live engine counters shown in the Logs dialog.
+  seven transport modes, per-destination UDPGW channels, lock-free `russh`
+  channel I/O, HTTP Custom upstream proxies (`host:port` or
+  `host:port@user:pass`), automatic primary-session fallback, and live engine
+  counters including `txB`/`rxB` byte totals in the Logs dialog.
 
 ## Download the APK
 
@@ -63,7 +64,7 @@ Every push to `main` builds release APKs with GitHub Actions.
 
 You can also trigger a build manually with **Run workflow** on the Actions page.
 
-The package name is `io.rustray.app`, version 1.2.4 (`versionCode` 7),
+The package name is `io.rustray.app`, version 1.2.5 (`versionCode` 8),
 `minSdk` 24, and `targetSdk` 35.
 
 ## Build it yourself
@@ -117,6 +118,8 @@ it can produce APKs that devices treat as official updates.
 - UDPGW resolves domain targets through `1.1.1.1:53` with fallback to `8.8.8.8:53`
   inside the tunnel to avoid fake-IP DNS loops; the SSH server must expose the
   configured UDPGW port.
+- UDPGW no longer forces the DNS flag on port 53 packets, so classic
+  `badvpn-udpgw` servers without `--dns-server` remain compatible.
 - VLESS without TLS is unencrypted. The core rejects such outbound connections
   to public hosts, so RustRay uses a single-label DNS alias and a `dns.hosts`
   entry to keep those links working. Only use this with providers that

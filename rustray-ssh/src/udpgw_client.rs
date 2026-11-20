@@ -1,22 +1,21 @@
 use std::collections::HashMap;
-use std::io::IoSlice;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use russh::ChannelMsg;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, timeout};
 
 use crate::protocol::{
     decode_server_packet, encode_client_packet_into, encode_keepalive_into,
-    UDPGW_CLIENT_FLAG_DNS, UDPGW_CLIENT_FLAG_REBIND,
+    UDPGW_CLIENT_FLAG_REBIND,
 };
 use crate::ssh_pool::SshPool;
 use crate::stats::BridgeStats;
 
-const MAX_WRITEV_BATCH: usize = 32;
+const MAX_WRITE_BATCH: usize = 32;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(300);
 const DNS_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -89,9 +88,6 @@ impl UdpgwClient {
     pub async fn send_datagram(&self, conid: u16, dst: SocketAddr, payload: &[u8]) {
         let normalized_dst = normalize_socket_addr(dst);
         let mut flags = 0u8;
-        if normalized_dst.port() == 53 {
-            flags |= UDPGW_CLIENT_FLAG_DNS;
-        }
         if self.rebind_pending.swap(false, Ordering::AcqRel) {
             flags |= UDPGW_CLIENT_FLAG_REBIND;
         }
@@ -196,49 +192,68 @@ async fn run_udpgw_loop(
             }
         };
 
-        let stream = channel.into_stream();
-        let (mut reader, mut writer) = tokio::io::split(stream);
+        // Use russh native lock-free Channel::split() instead of tokio::io::split(into_stream())
+        // to eliminate BiLock contention and ensure immediate SSH_MSG_CHANNEL_DATA delivery.
+        let (mut rx_ch, tx_ch) = channel.split();
 
-        // Send an immediate keepalive to verify channel liveness with badvpn-udpgw-rs
         let mut keepalive_buf = Vec::with_capacity(8);
         encode_keepalive_into(&mut keepalive_buf, 0);
-        if let Err(err) = writer.write_all(&keepalive_buf).await {
+        if let Err(err) = tx_ch.data(&keepalive_buf[..]).await {
             stats.set_udpgw_status("error");
             stats.set_last_error(format!("initial keepalive failed: {err}"));
             continue;
         }
-        let _ = writer.flush().await;
+        stats
+            .udpgw_written_bytes
+            .fetch_add(keepalive_buf.len() as u64, Ordering::Relaxed);
 
         let routes_reader = Arc::clone(&routes);
         let stats_reader = Arc::clone(&stats);
         let mut read_task = tokio::spawn(async move {
-            let mut len_buf = [0u8; 2];
-            let mut body = Vec::with_capacity(2048);
-            loop {
-                if reader.read_exact(&mut len_buf).await.is_err() {
-                    break;
-                }
-                let frame_len = u16::from_le_bytes(len_buf) as usize;
-                if frame_len == 0 {
-                    continue;
-                }
-                body.resize(frame_len, 0);
-                if reader.read_exact(&mut body).await.is_err() {
-                    break;
-                }
-                if let Some(pkt) = decode_server_packet(&body) {
-                    stats_reader.udp_rx_packets.fetch_add(1, Ordering::Relaxed);
-                    let guard = routes_reader.read().await;
-                    if let Some(reply_tx) = guard.get(&pkt.conid) {
-                        let _ = reply_tx.try_send((pkt.src_addr, pkt.payload.to_vec()));
+            let mut acc: Vec<u8> = Vec::with_capacity(8192);
+            while let Some(msg) = rx_ch.wait().await {
+                match msg {
+                    ChannelMsg::Data { data } => {
+                        let slice: &[u8] = &data;
+                        stats_reader
+                            .udpgw_raw_rx_bytes
+                            .fetch_add(slice.len() as u64, Ordering::Relaxed);
+                        acc.extend_from_slice(slice);
+
+                        let mut offset = 0usize;
+                        while acc.len().saturating_sub(offset) >= 2 {
+                            let frame_len =
+                                u16::from_le_bytes([acc[offset], acc[offset + 1]]) as usize;
+                            let total = 2 + frame_len;
+                            if acc.len().saturating_sub(offset) < total {
+                                break;
+                            }
+                            if frame_len > 0 {
+                                let body = &acc[offset + 2..offset + total];
+                                if let Some(pkt) = decode_server_packet(body) {
+                                    stats_reader.udp_rx_packets.fetch_add(1, Ordering::Relaxed);
+                                    let guard = routes_reader.read().await;
+                                    if let Some(reply_tx) = guard.get(&pkt.conid) {
+                                        let _ = reply_tx
+                                            .try_send((pkt.src_addr, pkt.payload.to_vec()));
+                                    }
+                                }
+                            }
+                            offset += total;
+                        }
+                        if offset > 0 {
+                            acc.drain(..offset);
+                        }
                     }
+                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    _ => {}
                 }
             }
         });
 
         let mut keepalive_tick = interval(KEEPALIVE_INTERVAL);
         keepalive_tick.tick().await;
-        let mut batch: Vec<Vec<u8>> = Vec::with_capacity(MAX_WRITEV_BATCH);
+        let mut coalesced: Vec<u8> = Vec::with_capacity(8192);
 
         loop {
             if rebind_pending.load(Ordering::Acquire) {
@@ -253,68 +268,41 @@ async fn run_udpgw_loop(
                 }
                 _ = keepalive_tick.tick() => {
                     encode_keepalive_into(&mut keepalive_buf, 0);
-                    if writer.write_all(&keepalive_buf).await.is_err() || writer.flush().await.is_err() {
+                    if let Err(err) = tx_ch.data(&keepalive_buf[..]).await {
+                        stats.set_last_error(format!("keepalive write err: {err}"));
                         break;
                     }
+                    stats
+                        .udpgw_written_bytes
+                        .fetch_add(keepalive_buf.len() as u64, Ordering::Relaxed);
                 }
                 maybe_frame = rx.recv() => {
                     let Some(frame) = maybe_frame else { break; };
-                    batch.clear();
-                    batch.push(frame);
-                    while batch.len() < MAX_WRITEV_BATCH {
+                    coalesced.clear();
+                    coalesced.extend_from_slice(&frame);
+                    let mut count = 1usize;
+                    while count < MAX_WRITE_BATCH && coalesced.len() < 16384 {
                         match rx.try_recv() {
-                            Ok(next) => batch.push(next),
+                            Ok(next) => {
+                                coalesced.extend_from_slice(&next);
+                                count += 1;
+                            }
                             Err(_) => break,
                         }
                     }
-                    if write_all_vectored(&mut writer, &batch).await.is_err() || writer.flush().await.is_err() {
+                    if let Err(err) = tx_ch.data(&coalesced[..]).await {
+                        stats.set_last_error(format!("udpgw write err: {err}"));
                         break;
                     }
+                    stats
+                        .udpgw_written_bytes
+                        .fetch_add(coalesced.len() as u64, Ordering::Relaxed);
                 }
             }
         }
 
         read_task.abort();
     }
-}
-
-async fn write_all_vectored<W: tokio::io::AsyncWrite + Unpin>(
-    writer: &mut W,
-    frames: &[Vec<u8>],
-) -> std::io::Result<()> {
-    let mut slice_idx = 0;
-    let mut byte_offset = 0;
-    while slice_idx < frames.len() {
-        let mut io_slices: [IoSlice<'_>; MAX_WRITEV_BATCH] = [IoSlice::new(&[]); MAX_WRITEV_BATCH];
-        let mut count = 0;
-        for (i, frame) in frames[slice_idx..].iter().enumerate() {
-            let data = if i == 0 { &frame[byte_offset..] } else { frame.as_slice() };
-            io_slices[count] = IoSlice::new(data);
-            count += 1;
-            if count == MAX_WRITEV_BATCH {
-                break;
-            }
-        }
-        let mut written = writer.write_vectored(&io_slices[..count]).await?;
-        if written == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::WriteZero,
-                "UDPGW write_vectored returned 0",
-            ));
-        }
-        while written > 0 && slice_idx < frames.len() {
-            let rem = frames[slice_idx].len() - byte_offset;
-            if written >= rem {
-                written -= rem;
-                slice_idx += 1;
-                byte_offset = 0;
-            } else {
-                byte_offset += written;
-                written = 0;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn build_dns_a_query(txid: u16, domain: &str) -> Option<Vec<u8>> {

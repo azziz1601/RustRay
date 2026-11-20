@@ -4,7 +4,7 @@
 
 RustRay is an Android VPN client for V2Ray-style links: `vless://`, `vmess://`, `trojan://`. The repository now includes a small Rust crate, `rustray-ssh/`, for SSH profiles alongside the prebuilt `io.github.aimalygin:xray-rust-mobile:0.10.0` JNI library. The xray-rust core is an independent, client-only Rust reimplementation of Xray, not the official Go `xray-core`.
 
-App identity: `io.rustray.app`, version `1.2.4` (`versionCode` 7), `minSdk` 24, `targetSdk` 35. Imported profiles are editable, but saving clears `importedConfig`; there are no subscription URLs or latency checks. VLESS without TLS uses a DNS-alias workaround; Shizuku captive-portal control is opt-in. Release APKs are produced by GitHub Actions; binaries are not committed.
+App identity: `io.rustray.app`, version `1.2.5` (`versionCode` 8), `minSdk` 24, `targetSdk` 35. Imported profiles are editable, but saving clears `importedConfig`; there are no subscription URLs or latency checks. VLESS without TLS uses a DNS-alias workaround; Shizuku captive-portal control is opt-in. Release APKs are produced by GitHub Actions; binaries are not committed.
 
 ## Architecture & Data Flow
 
@@ -20,7 +20,7 @@ Key flows:
 2. **Connect**: `MainActivity.onConnectClicked()` → VPN consent + notification permission → `startForegroundService(ACTION_CONNECT)` → `AppVpnService.handleConnect()` → `ConfigBuilder.configFor()` → `XrayVpnService.startXrayTunnel()`.
 3. **Tunnel start**: `XrayVpnService.runXrayTunnelStart()` does DNS bootstrap under a 5s deadline, startup-probe preflight, `buildTunnel().establish()`, `XrayCore.create()` with a borrowed TUN fd, `core.start()`, then publishes the session and starts pump/watch threads. `XrayTunnelStateMachine` serializes start/stop with token identity; every accepted start ends in started, failed, or cancelled.
 4. **Telemetry**: `MainActivity` polls `AppVpnService.instance.snapshot()` every second → `XrayVpnService.xrayVpnRuntimeSnapshot()` → JNI stats/connection snapshot.
-5. **SSH**: `AppVpnService.handleConnect()` spawns `rustray-ssh-start` → `RustSshBridge.start()` → JNI `librustray_ssh` → local SOCKS5 on `127.0.0.1` → `ConfigBuilder.configForSsh()` → `startXrayTunnel()`. Modes `proxy` and `ssl_payload` route through `Profile.sshProxy`; each UDP destination gets its own UDPGW conid, domain resolution falls back from 1.1.1.1 to 8.8.8.8, and `BridgeStats` is exposed through `RustSshBridge.statsSummary()` in the Logs dialog. Stop and rebind call `RustSshBridge.stop()`/`rebind()`.
+5. **SSH**: `AppVpnService.handleConnect()` spawns `rustray-ssh-start` → `RustSshBridge.start()` → JNI `librustray_ssh` → local SOCKS5 on `127.0.0.1` → `ConfigBuilder.configForSsh()` → `startXrayTunnel()`. Modes `proxy` and `ssl_payload` route through `Profile.sshProxy`. Each UDP destination gets its own UDPGW conid; `udpgw_client.rs` uses `russh` `Channel::split()` with coalesced `ChannelMsg::Data` frames instead of `tokio::io::split(into_stream())`, and does not force the DNS flag on port 53. `BridgeStats` adds `txB`/`rxB` byte counters and is exposed through `RustSshBridge.statsSummary()` in the Logs dialog.
 
 `XrayCore` is `Closeable` around a `Long nativeHandle`. A fair `ReentrantReadWriteLock` separates lifecycle/native-free work (write lock) from the data path (read lock). Native results are decoded by typed snapshot helpers.
 
@@ -96,7 +96,7 @@ Release signing needs untracked root files `rustray-release.jks` and `keystore.p
 | `app/src/main/java/io/rustray/app/MainActivity.kt` | Home UI, clipboard import, permission launchers, one-second status polling. |
 | `app/src/main/java/io/rustray/app/ConfigBuilder.kt`, `app/src/main/java/io/rustray/app/PlaintextVlessCompat.kt` | Config assembly and no-TLS VLESS DNS-alias workaround. |
 | `app/src/main/java/io/rustray/app/RustSshBridge.kt` | JNI bridge: `System.loadLibrary("rustray_ssh")`, `start/stop/rebind`, and `statsSummary()` via `nativeGetStats`. |
-| `rustray-ssh/src/lib.rs`, `config.rs`, `transport.rs`, `ssh_pool.rs`, `socks5.rs`, `udpgw_client.rs`, `stats.rs`, `protocol.rs` | Native SSH engine: transport modes, per-destination UDPGW conids, remote DNS fallback, SOCKS5 endpoint, and atomic bridge telemetry. |
+| `rustray-ssh/src/lib.rs`, `config.rs`, `transport.rs`, `ssh_pool.rs`, `socks5.rs`, `udpgw_client.rs`, `stats.rs`, `protocol.rs` | Native SSH engine: transport modes, per-destination UDPGW conids, lock-free native channel I/O, remote DNS fallback, SOCKS5 endpoint, and atomic bridge telemetry with byte counters. |
 | `app/src/main/res/layout/activity_edit_profile.xml` | SSH editor fields, remote proxy input, and transport visibility controls. |
 | `app/build.gradle.kts` | SDK/min/target levels, ABI splits, R8/lint settings, dependency versions. |
 | `app/proguard-rules.pro` | Keeps `org.xrayrust.mobile.**`, native methods, `RustSshBridge`, Shizuku APIs; do not remove when changing R8 config. |
