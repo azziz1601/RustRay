@@ -37,6 +37,7 @@ object RustSshBridge {
             .put("password", profile.credential)
             .put("transportMode", profile.sshTransport.wire)
             .put("payload", profile.sshPayload)
+            .put("proxy", profile.sshProxy)
             .put("sni", profile.sni)
             .put("wsHost", profile.host)
             .put("wsPath", profile.path.ifBlank { "/" })

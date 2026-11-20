@@ -44,6 +44,8 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var etAlterId: TextInputEditText
     private lateinit var tilSshTransport: TextInputLayout
     private lateinit var ddSshTransport: MaterialAutoCompleteTextView
+    private lateinit var tilSshProxy: TextInputLayout
+    private lateinit var etSshProxy: TextInputEditText
     private lateinit var tilSshPayload: TextInputLayout
     private lateinit var etSshPayload: TextInputEditText
     private lateinit var tilSshUdpgwPort: TextInputLayout
@@ -141,6 +143,8 @@ class EditProfileActivity : AppCompatActivity() {
         etAlterId = findViewById(R.id.etAlterId)
         tilSshTransport = findViewById(R.id.tilSshTransport)
         ddSshTransport = findViewById(R.id.ddSshTransport)
+        tilSshProxy = findViewById(R.id.tilSshProxy)
+        etSshProxy = findViewById(R.id.etSshProxy)
         tilSshPayload = findViewById(R.id.tilSshPayload)
         etSshPayload = findViewById(R.id.etSshPayload)
         tilSshUdpgwPort = findViewById(R.id.tilSshUdpgwPort)
@@ -234,6 +238,7 @@ class EditProfileActivity : AppCompatActivity() {
         ddVmessSecurity.setText(profile.vmessSecurity.ifBlank { "auto" }, false)
         etAlterId.setText(profile.alterId.toString())
         ddSshTransport.setText(profile.sshTransport.label, false)
+        etSshProxy.setText(profile.sshProxy)
         etSshPayload.setText(profile.sshPayload)
         etSshUdpgwPort.setText(profile.sshUdpgwPort.toString())
         etSshPoolSize.setText(profile.sshPoolSize.toString())
@@ -293,9 +298,16 @@ class EditProfileActivity : AppCompatActivity() {
 
         if (isSsh) {
             val sshMode = selectedSshTransport()
-            val needsPayload = sshMode == SshTransport.PAYLOAD || sshMode == SshTransport.WS || sshMode == SshTransport.SSL_WS
+            val needsProxy = sshMode == SshTransport.PAYLOAD ||
+                sshMode == SshTransport.PROXY ||
+                sshMode == SshTransport.SSL_PAYLOAD ||
+                sshMode == SshTransport.WS ||
+                sshMode == SshTransport.SSL_WS
+            val needsPayload = needsProxy
             val needsWs = sshMode == SshTransport.WS || sshMode == SshTransport.SSL_WS
-            val needsSni = sshMode == SshTransport.SSL || sshMode == SshTransport.SSL_WS
+            val needsSni = sshMode == SshTransport.SSL ||
+                sshMode == SshTransport.SSL_PAYLOAD ||
+                sshMode == SshTransport.SSL_WS
 
             tilSshUsername.visibility = View.VISIBLE
             tilPassword.visibility = View.VISIBLE
@@ -305,6 +317,7 @@ class EditProfileActivity : AppCompatActivity() {
             tilAlterId.visibility = View.GONE
 
             tilSshTransport.visibility = View.VISIBLE
+            tilSshProxy.visibility = if (needsProxy) View.VISIBLE else View.GONE
             tilSshPayload.visibility = if (needsPayload) View.VISIBLE else View.GONE
             tilSshUdpgwPort.visibility = View.VISIBLE
             tilSshPoolSize.visibility = View.VISIBLE
@@ -332,6 +345,7 @@ class EditProfileActivity : AppCompatActivity() {
 
         tilSshUsername.visibility = View.GONE
         tilSshTransport.visibility = View.GONE
+        tilSshProxy.visibility = View.GONE
         tilSshPayload.visibility = View.GONE
         tilSshUdpgwPort.visibility = View.GONE
         tilSshPoolSize.visibility = View.GONE
@@ -396,7 +410,12 @@ class EditProfileActivity : AppCompatActivity() {
             showError(tilPort, "Port must be 1–65535")
             valid = false
         }
+        val sshProxy = etSshProxy.text?.toString()?.trim().orEmpty()
         if (protocol == Protocol.SSH) {
+            if (sshTransport == SshTransport.PROXY && sshProxy.isBlank()) {
+                showError(tilSshProxy, "Remote proxy wajib diisi")
+                valid = false
+            }
             if (sshUsername.isBlank()) {
                 showError(tilSshUsername, "Username is required")
                 valid = false
@@ -464,6 +483,7 @@ class EditProfileActivity : AppCompatActivity() {
             sshUsername = sshUsername,
             sshTransport = sshTransport,
             sshPayload = etSshPayload.text?.toString().orEmpty(),
+            sshProxy = sshProxy,
             sshUdpgwPort = udpgwPort,
             sshPoolSize = poolSize,
             importedConfig = null,
@@ -478,7 +498,7 @@ class EditProfileActivity : AppCompatActivity() {
     private fun clearErrors() {
         listOf(
             tilName, tilServer, tilPort, tilSshUsername, tilUuid, tilPassword, tilFlow,
-            tilVmessSecurity, tilAlterId, tilSshTransport, tilSshPayload, tilSshUdpgwPort,
+            tilVmessSecurity, tilAlterId, tilSshTransport, tilSshProxy, tilSshPayload, tilSshUdpgwPort,
             tilSshPoolSize, tilNetwork, tilPath, tilHost, tilServiceName,
             tilSecurity, tilSni, tilFingerprint, tilAlpn, tilPublicKey,
             tilShortId, tilSpiderX,

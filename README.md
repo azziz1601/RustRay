@@ -18,7 +18,7 @@ Supported link formats:
 - `trojan://`
 
 Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
-Manual SSH profiles add direct, payload, WebSocket, SSL, and SSL+WebSocket modes with pooled connections and BadVPN UDPGW.
+Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and SSL+WebSocket modes with pooled connections, BadVPN UDPGW, and optional HTTP upstream proxy.
 
 > RustRay uses **xray-rust**, an independent, client-only Rust reimplementation.
 > It is not the official XTLS Go [Xray-core](https://github.com/XTLS/Xray-core)
@@ -46,7 +46,8 @@ Manual SSH profiles add direct, payload, WebSocket, SSL, and SSL+WebSocket modes
 - Build the TUN configuration locally with fake-IP DNS, direct routing for
   private addresses, and HTTP/TLS/QUIC sniffing.
 - Run SSH accounts through a native Rust bridge with a local SOCKS5 endpoint,
-  five transport modes, pooled connections, and optional UDPGW.
+  seven transport modes, pooled connections, optional UDPGW, and HTTP Custom
+  upstream proxies (`host:port` or `host:port@user:pass`).
 
 ## Download the APK
 
@@ -61,7 +62,7 @@ Every push to `main` builds release APKs with GitHub Actions.
 
 You can also trigger a build manually with **Run workflow** on the Actions page.
 
-The package name is `io.rustray.app`, version 1.2.1 (`versionCode` 4),
+The package name is `io.rustray.app`, version 1.2.2 (`versionCode` 5),
 `minSdk` 24, and `targetSdk` 35.
 
 ## Build it yourself
@@ -110,6 +111,8 @@ it can produce APKs that devices treat as official updates.
 - The SSH engine ships only for `arm64-v8a` and `armeabi-v7a`; other ABIs and
   emulators cannot load SSH profiles. SSH connections accept any server
   certificate or host key, so use only trusted endpoints.
+- Proxy credentials are sent as base64 `Proxy-Authorization`; use an SSL mode
+  when the proxy is not on a trusted network.
 - VLESS without TLS is unencrypted. The core rejects such outbound connections
   to public hosts, so RustRay uses a single-label DNS alias and a `dns.hosts`
   entry to keep those links working. Only use this with providers that

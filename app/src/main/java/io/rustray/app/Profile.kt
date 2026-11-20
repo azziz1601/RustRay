@@ -17,11 +17,13 @@ enum class Protocol(val wire: String, val label: String) {
 }
 
 enum class SshTransport(val wire: String, val label: String) {
-    DIRECT("direct", "Direct"),
-    PAYLOAD("payload", "HTTP Payload"),
-    SSL("ssl", "SSL / SNI"),
-    WS("ws", "WebSocket"),
-    SSL_WS("ssl_ws", "SSL + WebSocket");
+    DIRECT("direct", "SSH Direct"),
+    PAYLOAD("payload", "SSH + Payload"),
+    PROXY("proxy", "SSH + Payload + Proxy"),
+    SSL("ssl", "SSH + SSL / SNI"),
+    SSL_PAYLOAD("ssl_payload", "SSH + SSL + Payload"),
+    WS("ws", "SSH + WebSocket"),
+    SSL_WS("ssl_ws", "SSH + SSL + WebSocket");
 
     companion object {
         fun fromWire(value: String?): SshTransport =
@@ -77,6 +79,7 @@ data class Profile(
     val sshUsername: String = "",
     val sshTransport: SshTransport = SshTransport.DIRECT,
     val sshPayload: String = "",
+    val sshProxy: String = "",
     val sshUdpgwPort: Int = 7300,
     val sshPoolSize: Int = 2,
     val importedConfig: String? = null,
@@ -110,6 +113,7 @@ data class Profile(
         .put("sshUsername", sshUsername)
         .put("sshTransport", sshTransport.wire)
         .put("sshPayload", sshPayload)
+        .put("sshProxy", sshProxy)
         .put("sshUdpgwPort", sshUdpgwPort)
         .put("sshPoolSize", sshPoolSize)
         .put("plaintext", plaintext)
@@ -140,6 +144,7 @@ data class Profile(
             sshUsername = json.optString("sshUsername"),
             sshTransport = SshTransport.fromWire(json.optString("sshTransport")),
             sshPayload = json.optString("sshPayload"),
+            sshProxy = json.optString("sshProxy"),
             sshUdpgwPort = json.optInt("sshUdpgwPort", 7300).coerceIn(1, 65535),
             sshPoolSize = json.optInt("sshPoolSize", 2).coerceIn(1, 4),
             importedConfig = json.optString("importedConfig")

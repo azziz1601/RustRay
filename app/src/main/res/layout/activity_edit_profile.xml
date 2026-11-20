@@ -221,6 +221,22 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSshProxy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="Remote Proxy"
+                app:helperText="Format host:port atau host:port@user:pass">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSshProxy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textNoSuggestions"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilSshPayload"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
