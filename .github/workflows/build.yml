@@ -31,12 +31,21 @@ jobs:
         with:
           workspaces: rustray-ssh
 
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-binstall
+
       - name: Install cargo-ndk
-        uses: taiki-e/install-action@cargo-ndk
+        run: cargo binstall -y cargo-ndk || cargo install --locked cargo-ndk
 
       - name: Build Native SSH Engine (librustray_ssh.so)
         working-directory: rustray-ssh
         run: |
+          if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -n "${ANDROID_HOME:-}" ] && [ -d "${ANDROID_HOME}/ndk" ]; then
+            export ANDROID_NDK_HOME="$(ls -d "${ANDROID_HOME}"/ndk/* | sort -V | tail -n 1)"
+          fi
+          echo "Using ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}"
           cargo ndk -t arm64-v8a -t armeabi-v7a --platform 24 -o ../app/src/main/jniLibs build --release
 
       - name: Setup Gradle

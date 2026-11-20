@@ -113,7 +113,7 @@ Release signing needs untracked root files `rustray-release.jks` and `keystore.p
 - Dependency versions are inline in `app/build.gradle.kts`; no version catalog or dependency-verification metadata.
 - ABI splits: `arm64-v8a`, `armeabi-v7a`; `isUniversalApk = false`. JNI libs use `jniLibs.useLegacyPackaging = true`.
 - Rust toolchain with Android targets `aarch64-linux-android` and `armv7-linux-androideabi`, plus `cargo-ndk`; no Node or Bun required. No `Cargo.lock` is committed; `rustray-ssh/target/` and generated `app/src/main/jniLibs/` are gitignored.
-- CI uses `ubuntu-latest`, Temurin 17, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `taiki-e/install-action@cargo-ndk`, `gradle/actions/setup-gradle@v4`, and upload-artifact `rustray-apks`; cache is read-only outside `main`.
+- CI uses `ubuntu-latest`, Temurin 17, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `taiki-e/install-action@v2` with `cargo-binstall`, `cargo binstall cargo-ndk`, `gradle/actions/setup-gradle@v4`, and upload-artifact `rustray-apks`; cache is read-only outside `main`.
 
 ## Testing & QA
 
