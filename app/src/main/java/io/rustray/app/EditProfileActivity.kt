@@ -211,7 +211,7 @@ class EditProfileActivity : AppCompatActivity() {
         etPath.setText("/")
         etSpiderX.setText("/")
         etSshUdpgwPort.setText("7300")
-        etSshPoolSize.setText("2")
+        etSshPoolSize.setText("1")
     }
 
     private fun populate(profile: Profile) {

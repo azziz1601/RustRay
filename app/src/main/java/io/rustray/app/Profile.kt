@@ -81,7 +81,7 @@ data class Profile(
     val sshPayload: String = "",
     val sshProxy: String = "",
     val sshUdpgwPort: Int = 7300,
-    val sshPoolSize: Int = 2,
+    val sshPoolSize: Int = 1,
     val importedConfig: String? = null,
     val plaintext: Boolean = false,
 ) {
@@ -146,7 +146,7 @@ data class Profile(
             sshPayload = json.optString("sshPayload"),
             sshProxy = json.optString("sshProxy"),
             sshUdpgwPort = json.optInt("sshUdpgwPort", 7300).coerceIn(1, 65535),
-            sshPoolSize = json.optInt("sshPoolSize", 2).coerceIn(1, 4),
+            sshPoolSize = json.optInt("sshPoolSize", 1).coerceIn(1, 4),
             importedConfig = json.optString("importedConfig")
                 .takeIf { it.isNotEmpty() && it != "null" },
             plaintext = json.optBoolean("plaintext", false),

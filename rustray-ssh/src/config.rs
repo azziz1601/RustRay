@@ -41,7 +41,7 @@ fn default_udpgw_port() -> u16 {
 }
 
 fn default_pool_size() -> usize {
-    2
+    1
 }
 
 fn default_udp_mtu() -> usize {

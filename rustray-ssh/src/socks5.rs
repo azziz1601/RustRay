@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, watch};
 
 use crate::ssh_pool::SshPool;
@@ -83,7 +83,7 @@ async fn handle_socks5_client(
             let bind_addr = udp.local_addr()?;
             send_socks_reply(&mut stream, 0x00, bind_addr).await?;
 
-            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(128);
+            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(256);
             let conid = udpgw.register(reply_tx).await;
 
             let udp_recv = Arc::clone(&udp);
@@ -119,7 +119,7 @@ async fn handle_socks5_client(
                             let mut guard = client_peer.write().await;
                             *guard = Some(peer);
                         }
-                        if let Some((dst, payload)) = parse_socks5_udp(&buf[..len]).await {
+                        if let Some((dst, payload)) = parse_socks5_udp(&buf[..len], &udpgw_send).await {
                             udpgw_send.send_datagram(conid, dst, payload).await;
                         }
                     }
@@ -185,7 +185,7 @@ async fn send_socks_reply(stream: &mut TcpStream, rep: u8, addr: SocketAddr) -> 
     stream.write_all(&resp).await
 }
 
-async fn parse_socks5_udp(packet: &[u8]) -> Option<(SocketAddr, &[u8])> {
+async fn parse_socks5_udp<'a>(packet: &'a [u8], udpgw: &UdpgwClient) -> Option<(SocketAddr, &'a [u8])> {
     if packet.len() < 4 || packet[2] != 0x00 {
         return None;
     }
@@ -218,8 +218,8 @@ async fn parse_socks5_udp(packet: &[u8]) -> Option<(SocketAddr, &[u8])> {
             }
             let domain = std::str::from_utf8(&packet[5..5 + len]).ok()?;
             let port = u16::from_be_bytes([packet[5 + len], packet[6 + len]]);
-            let resolved = lookup_host((domain, port)).await.ok()?.next()?;
-            (resolved, 7 + len)
+            let ip = udpgw.resolve_domain(domain).await?;
+            (SocketAddr::new(ip, port), 7 + len)
         }
         _ => return None,
     };

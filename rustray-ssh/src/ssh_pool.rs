@@ -49,7 +49,7 @@ impl SshPool {
         }
     }
 
-    /// Connects the first TCP slot (and optionally UDPGW slot) eagerly so errors surface on start.
+    /// Connects the primary SSH slot eagerly so handshake/auth errors surface immediately on start.
     pub async fn warmup(&self) -> io::Result<()> {
         let _ = self.get_or_connect_slot(&self.tcp_slots[0]).await?;
         Ok(())
@@ -60,7 +60,15 @@ impl SshPool {
         let slot = &self.tcp_slots[idx];
 
         for attempt in 0..2 {
-            let handle = self.get_or_connect_slot(slot).await?;
+            let handle = match self.get_or_connect_slot(slot).await {
+                Ok(h) => h,
+                Err(err) if idx != 0 => {
+                    // Fallback to primary slot if secondary SSH session is rejected (e.g. single-login server)
+                    log::warn!("SSH secondary slot {idx} failed ({err}), falling back to slot 0");
+                    self.get_or_connect_slot(&self.tcp_slots[0]).await?
+                }
+                Err(err) => return Err(err),
+            };
             match handle
                 .channel_open_direct_tcpip(dst_host, dst_port as u32, "127.0.0.1", 0)
                 .await
@@ -83,16 +91,37 @@ impl SshPool {
 
     pub async fn open_udpgw_channel(&self) -> io::Result<Channel<Msg>> {
         let port = self.cfg.udpgw_port;
+        // When pool_size == 1, multiplex UDPGW directly on the already-connected primary SSH session
+        // (zero extra handshake latency, works on strict 1-session SSH accounts/proxies).
+        // When pool_size >= 2, prefer a dedicated SSH session for UDPGW to eliminate TCP HOL blocking,
+        // with automatic fallback to primary slot if the server rejects a second login.
+        let use_dedicated = self.tcp_slots.len() >= 2;
+        let primary_slot = if use_dedicated {
+            &self.udpgw_slot
+        } else {
+            &self.tcp_slots[0]
+        };
+
         for attempt in 0..2 {
-            let handle = self.get_or_connect_slot(&self.udpgw_slot).await?;
+            let handle = match self.get_or_connect_slot(primary_slot).await {
+                Ok(h) => h,
+                Err(err) if use_dedicated => {
+                    log::warn!("Dedicated UDPGW SSH session failed ({err}), falling back to primary session");
+                    self.get_or_connect_slot(&self.tcp_slots[0]).await?
+                }
+                Err(err) => return Err(err),
+            };
             match handle
                 .channel_open_direct_tcpip("127.0.0.1", port as u32, "127.0.0.1", 0)
                 .await
             {
-                Ok(ch) => return Ok(ch),
+                Ok(ch) => {
+                    log::info!("UDPGW channel opened to 127.0.0.1:{port}");
+                    return Ok(ch);
+                }
                 Err(err) => {
                     log::warn!("SSH UDPGW channel open failed (attempt {}): {}", attempt + 1, err);
-                    let mut guard = self.udpgw_slot.lock().await;
+                    let mut guard = primary_slot.lock().await;
                     if guard.as_ref().is_some_and(|h| Arc::ptr_eq(h, &handle)) {
                         *guard = None;
                     }
