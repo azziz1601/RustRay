@@ -14,11 +14,12 @@ use crate::protocol::{
     UDPGW_CLIENT_FLAG_DNS, UDPGW_CLIENT_FLAG_REBIND,
 };
 use crate::ssh_pool::SshPool;
+use crate::stats::BridgeStats;
 
 const MAX_WRITEV_BATCH: usize = 32;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(300);
-const DNS_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+const DNS_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub type UdpReplyTx = mpsc::Sender<(SocketAddr, Vec<u8>)>;
 
@@ -29,10 +30,15 @@ pub struct UdpgwClient {
     next_conid: AtomicU16,
     dns_txid: AtomicU16,
     rebind_pending: Arc<AtomicBool>,
+    stats: Arc<BridgeStats>,
 }
 
 impl UdpgwClient {
-    pub fn spawn(pool: Arc<SshPool>, shutdown: tokio::sync::watch::Receiver<bool>) -> Arc<Self> {
+    pub fn spawn(
+        pool: Arc<SshPool>,
+        stats: Arc<BridgeStats>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
         let routes: Arc<RwLock<HashMap<u16, UdpReplyTx>>> = Arc::new(RwLock::new(HashMap::new()));
         let dns_cache: Arc<RwLock<HashMap<String, (IpAddr, Instant)>>> =
@@ -46,9 +52,10 @@ impl UdpgwClient {
             next_conid: AtomicU16::new(1),
             dns_txid: AtomicU16::new(0x1234),
             rebind_pending: Arc::clone(&rebind_pending),
+            stats: Arc::clone(&stats),
         });
 
-        tokio::spawn(run_udpgw_loop(pool, rx, routes, rebind_pending, shutdown));
+        tokio::spawn(run_udpgw_loop(pool, stats, rx, routes, rebind_pending, shutdown));
         client
     }
 
@@ -65,25 +72,39 @@ impl UdpgwClient {
         self.routes.write().await.remove(&conid);
     }
 
+    pub async fn unregister_many(&self, conids: &[u16]) {
+        if conids.is_empty() {
+            return;
+        }
+        let mut guard = self.routes.write().await;
+        for id in conids {
+            guard.remove(id);
+        }
+    }
+
     pub fn trigger_rebind(&self) {
         self.rebind_pending.store(true, Ordering::Release);
     }
 
     pub async fn send_datagram(&self, conid: u16, dst: SocketAddr, payload: &[u8]) {
+        let normalized_dst = normalize_socket_addr(dst);
         let mut flags = 0u8;
-        if dst.port() == 53 {
+        if normalized_dst.port() == 53 {
             flags |= UDPGW_CLIENT_FLAG_DNS;
         }
         if self.rebind_pending.swap(false, Ordering::AcqRel) {
             flags |= UDPGW_CLIENT_FLAG_REBIND;
         }
         let mut frame = Vec::with_capacity(24 + payload.len());
-        if encode_client_packet_into(&mut frame, flags, conid, dst, payload) {
-            let _ = self.tx.try_send(frame);
+        if encode_client_packet_into(&mut frame, flags, conid, normalized_dst, payload) {
+            if self.tx.try_send(frame).is_ok() {
+                self.stats.udp_tx_packets.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
-    /// Resolves a domain name remotely via UDPGW (1.1.1.1:53) to avoid Android TUN/FakeIP DNS loops.
+    /// Resolves a domain name remotely via UDPGW (1.1.1.1:53 with fallback 8.8.8.8:53)
+    /// to avoid Android TUN/FakeIP DNS loops.
     pub async fn resolve_domain(&self, domain: &str) -> Option<IpAddr> {
         if let Ok(ip) = domain.parse::<IpAddr>() {
             return Some(ip);
@@ -95,52 +116,82 @@ impl UdpgwClient {
             }
         }
 
-        let txid = self.dns_txid.fetch_add(1, Ordering::Relaxed);
-        let query = build_dns_a_query(txid, &key)?;
-        let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(4);
-        let conid = self.register(reply_tx).await;
+        let dns_servers = [
+            SocketAddr::from(([1, 1, 1, 1], 53)),
+            SocketAddr::from(([8, 8, 8, 8], 53)),
+        ];
 
-        let dns_server = SocketAddr::from(([1, 1, 1, 1], 53));
-        self.send_datagram(conid, dns_server, &query).await;
+        for server in dns_servers {
+            let txid = self.dns_txid.fetch_add(1, Ordering::Relaxed);
+            let Some(query) = build_dns_a_query(txid, &key) else {
+                return None;
+            };
+            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(4);
+            let conid = self.register(reply_tx).await;
+            self.send_datagram(conid, server, &query).await;
 
-        let resolved = match timeout(DNS_QUERY_TIMEOUT, reply_rx.recv()).await {
-            Ok(Some((_, resp))) => parse_dns_a_response(&resp, txid),
-            _ => None,
-        };
-        self.unregister(conid).await;
+            let resolved = match timeout(DNS_QUERY_TIMEOUT, reply_rx.recv()).await {
+                Ok(Some((_, resp))) => parse_dns_a_response(&resp, txid),
+                _ => None,
+            };
+            self.unregister(conid).await;
 
-        if let Some(ip) = resolved {
-            let mut cache = self.dns_cache.write().await;
-            if cache.len() > 512 {
-                cache.clear();
+            if let Some(ip) = resolved {
+                self.stats.udp_domain_resolved.fetch_add(1, Ordering::Relaxed);
+                let mut cache = self.dns_cache.write().await;
+                if cache.len() > 512 {
+                    cache.clear();
+                }
+                cache.insert(key, (ip, Instant::now() + DNS_CACHE_TTL));
+                return Some(ip);
             }
-            cache.insert(key, (ip, Instant::now() + DNS_CACHE_TTL));
         }
-        resolved
+
+        self.stats.udp_domain_failed.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+}
+
+fn normalize_socket_addr(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(v6) => {
+            if let Some(v4) = v6.ip().to_ipv4_mapped() {
+                SocketAddr::new(IpAddr::V4(v4), v6.port())
+            } else {
+                addr
+            }
+        }
+        SocketAddr::V4(_) => addr,
     }
 }
 
 async fn run_udpgw_loop(
     pool: Arc<SshPool>,
+    stats: Arc<BridgeStats>,
     mut rx: mpsc::Receiver<Vec<u8>>,
     routes: Arc<RwLock<HashMap<u16, UdpReplyTx>>>,
     rebind_pending: Arc<AtomicBool>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
+    let mut backoff_ms: u64 = 300;
     while !*shutdown.borrow() {
-        let first_frame = tokio::select! {
-            _ = shutdown.changed() => break,
-            frame = rx.recv() => match frame {
-                Some(f) => f,
-                None => break,
-            }
-        };
-
+        stats.set_udpgw_status("connecting");
         let channel = match pool.open_udpgw_channel().await {
-            Ok(ch) => ch,
+            Ok(ch) => {
+                backoff_ms = 300;
+                stats.set_udpgw_status("connected");
+                ch
+            }
             Err(err) => {
-                log::warn!("UDPGW channel connect error: {err}");
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                let msg = format!("connect failed: {err}");
+                log::warn!("UDPGW {msg}");
+                stats.set_udpgw_status("error");
+                stats.set_last_error(msg);
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {}
+                }
+                backoff_ms = (backoff_ms * 2).min(4000);
                 continue;
             }
         };
@@ -148,11 +199,18 @@ async fn run_udpgw_loop(
         let stream = channel.into_stream();
         let (mut reader, mut writer) = tokio::io::split(stream);
 
-        if writer.write_all(&first_frame).await.is_err() || writer.flush().await.is_err() {
+        // Send an immediate keepalive to verify channel liveness with badvpn-udpgw-rs
+        let mut keepalive_buf = Vec::with_capacity(8);
+        encode_keepalive_into(&mut keepalive_buf, 0);
+        if let Err(err) = writer.write_all(&keepalive_buf).await {
+            stats.set_udpgw_status("error");
+            stats.set_last_error(format!("initial keepalive failed: {err}"));
             continue;
         }
+        let _ = writer.flush().await;
 
         let routes_reader = Arc::clone(&routes);
+        let stats_reader = Arc::clone(&stats);
         let mut read_task = tokio::spawn(async move {
             let mut len_buf = [0u8; 2];
             let mut body = Vec::with_capacity(2048);
@@ -169,6 +227,7 @@ async fn run_udpgw_loop(
                     break;
                 }
                 if let Some(pkt) = decode_server_packet(&body) {
+                    stats_reader.udp_rx_packets.fetch_add(1, Ordering::Relaxed);
                     let guard = routes_reader.read().await;
                     if let Some(reply_tx) = guard.get(&pkt.conid) {
                         let _ = reply_tx.try_send((pkt.src_addr, pkt.payload.to_vec()));
@@ -179,7 +238,6 @@ async fn run_udpgw_loop(
 
         let mut keepalive_tick = interval(KEEPALIVE_INTERVAL);
         keepalive_tick.tick().await;
-        let mut keepalive_buf = Vec::with_capacity(8);
         let mut batch: Vec<Vec<u8>> = Vec::with_capacity(MAX_WRITEV_BATCH);
 
         loop {
@@ -190,6 +248,7 @@ async fn run_udpgw_loop(
                 _ = shutdown.changed() => break,
                 _ = &mut read_task => {
                     log::warn!("UDPGW reader closed, reconnecting channel");
+                    stats.set_udpgw_status("reconnecting");
                     break;
                 }
                 _ = keepalive_tick.tick() => {

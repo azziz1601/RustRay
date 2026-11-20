@@ -61,6 +61,11 @@ object RustSshBridge {
         runCatching { nativeRebind() }
     }
 
+    fun statsSummary(): String {
+        if (!libraryLoaded) return ""
+        return runCatching { nativeGetStats() }.getOrDefault("")
+    }
+
     @JvmStatic
     private external fun nativeStart(configJson: String, vpnService: AppVpnService): Int
 
@@ -69,4 +74,7 @@ object RustSshBridge {
 
     @JvmStatic
     private external fun nativeRebind()
+
+    @JvmStatic
+    private external fun nativeGetStats(): String
 }

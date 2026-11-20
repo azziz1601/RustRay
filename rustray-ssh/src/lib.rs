@@ -2,13 +2,14 @@ mod config;
 mod protocol;
 mod socks5;
 mod ssh_pool;
+mod stats;
 mod transport;
 mod udpgw_client;
 
 use std::sync::{Arc, Mutex, OnceLock};
 
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
-use jni::sys::jint;
+use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 use tokio::runtime::Runtime;
 use tokio::sync::watch;
@@ -16,6 +17,7 @@ use tokio::sync::watch;
 use crate::config::SshBridgeConfig;
 use crate::socks5::start_socks5_server;
 use crate::ssh_pool::SshPool;
+use crate::stats::BridgeStats;
 use crate::transport::SocketProtector;
 use crate::udpgw_client::UdpgwClient;
 
@@ -23,6 +25,7 @@ struct RunningBridge {
     shutdown_tx: watch::Sender<bool>,
     pool: Arc<SshPool>,
     udpgw: Arc<UdpgwClient>,
+    stats: Arc<BridgeStats>,
     _runtime: Runtime,
 }
 
@@ -117,11 +120,18 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let pool = Arc::new(SshPool::new(Arc::new(cfg), protector));
+    let stats = Arc::new(BridgeStats::new());
 
     let start_res = runtime.block_on(async {
         pool.warmup().await?;
-        let udpgw = UdpgwClient::spawn(Arc::clone(&pool), shutdown_rx.clone());
-        let port = start_socks5_server(Arc::clone(&pool), Arc::clone(&udpgw), shutdown_rx).await?;
+        let udpgw = UdpgwClient::spawn(Arc::clone(&pool), Arc::clone(&stats), shutdown_rx.clone());
+        let port = start_socks5_server(
+            Arc::clone(&pool),
+            Arc::clone(&udpgw),
+            Arc::clone(&stats),
+            shutdown_rx,
+        )
+        .await?;
         Ok::<(u16, Arc<UdpgwClient>), std::io::Error>((port, udpgw))
     });
 
@@ -132,6 +142,7 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
                     shutdown_tx,
                     pool,
                     udpgw,
+                    stats,
                     _runtime: runtime,
                 });
             }
@@ -168,6 +179,21 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeRebind(
             });
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeGetStats(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let text = state()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|r| r.stats.summary()))
+        .unwrap_or_default();
+    env.new_string(text)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
 }
 
 fn stop_existing() {

@@ -1,17 +1,21 @@
+use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Mutex};
 
 use crate::ssh_pool::SshPool;
+use crate::stats::BridgeStats;
 use crate::udpgw_client::UdpgwClient;
 
 pub async fn start_socks5_server(
     pool: Arc<SshPool>,
     udpgw: Arc<UdpgwClient>,
+    stats: Arc<BridgeStats>,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<u16> {
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
@@ -26,8 +30,9 @@ pub async fn start_socks5_server(
                     let _ = stream.set_nodelay(true);
                     let pool_c = Arc::clone(&pool);
                     let udpgw_c = Arc::clone(&udpgw);
+                    let stats_c = Arc::clone(&stats);
                     tokio::spawn(async move {
-                        let _ = handle_socks5_client(stream, pool_c, udpgw_c).await;
+                        let _ = handle_socks5_client(stream, pool_c, udpgw_c, stats_c).await;
                     });
                 }
             }
@@ -41,6 +46,7 @@ async fn handle_socks5_client(
     mut stream: TcpStream,
     pool: Arc<SshPool>,
     udpgw: Arc<UdpgwClient>,
+    stats: Arc<BridgeStats>,
 ) -> io::Result<()> {
     // 1. Greeting: VER, NMETHODS, METHODS...
     let mut head = [0u8; 2];
@@ -52,6 +58,7 @@ async fn handle_socks5_client(
     stream.read_exact(&mut methods).await?;
     // Reply: NO AUTH (0x00)
     stream.write_all(&[0x05, 0x00]).await?;
+    stream.flush().await?;
 
     // 2. Request: VER, CMD, RSV, ATYP
     let mut req = [0u8; 4];
@@ -66,8 +73,12 @@ async fn handle_socks5_client(
         0x01 => {
             // CONNECT (TCP)
             let channel = match pool.open_tcp_channel(&dst_host, dst_port).await {
-                Ok(ch) => ch,
+                Ok(ch) => {
+                    stats.tcp_opened.fetch_add(1, Ordering::Relaxed);
+                    ch
+                }
                 Err(err) => {
+                    stats.tcp_failed.fetch_add(1, Ordering::Relaxed);
                     let _ = send_socks_reply(&mut stream, 0x05, SocketAddr::from(([0, 0, 0, 0], 0))).await;
                     return Err(err);
                 }
@@ -79,12 +90,16 @@ async fn handle_socks5_client(
         }
         0x03 => {
             // UDP ASSOCIATE
+            stats.udp_assoc_opened.fetch_add(1, Ordering::Relaxed);
             let udp = Arc::new(UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?);
             let bind_addr = udp.local_addr()?;
             send_socks_reply(&mut stream, 0x00, bind_addr).await?;
 
-            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(256);
-            let conid = udpgw.register(reply_tx).await;
+            // Map each unique remote destination to its own UDPGW conid so badvpn-udpgw-rs
+            // never destroys an active game UDP socket when another destination is contacted.
+            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(512);
+            let dst_conids: Arc<Mutex<HashMap<SocketAddr, u16>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
             let udp_recv = Arc::clone(&udp);
             let udpgw_send = Arc::clone(&udpgw);
@@ -117,17 +132,48 @@ async fn handle_socks5_client(
                         let Ok((len, peer)) = res else { break; };
                         {
                             let mut guard = client_peer.write().await;
-                            *guard = Some(peer);
+                            if *guard != Some(peer) {
+                                *guard = Some(peer);
+                            }
                         }
-                        if let Some((dst, payload)) = parse_socks5_udp(&buf[..len], &udpgw_send).await {
-                            udpgw_send.send_datagram(conid, dst, payload).await;
+                        match parse_socks5_udp_raw(&buf[..len]) {
+                            Some((ParsedUdpTarget::Addr(dst), payload)) => {
+                                let conid = get_or_register_conid(
+                                    &dst_conids,
+                                    &udpgw_send,
+                                    &reply_tx,
+                                    dst,
+                                ).await;
+                                udpgw_send.send_datagram(conid, dst, payload).await;
+                            }
+                            Some((ParsedUdpTarget::Domain(domain, port), payload)) => {
+                                // Resolve domain asynchronously via UDPGW so recv_from never blocks.
+                                let udpgw_c = Arc::clone(&udpgw_send);
+                                let conids_c = Arc::clone(&dst_conids);
+                                let reply_c = reply_tx.clone();
+                                let payload_owned = payload.to_vec();
+                                tokio::spawn(async move {
+                                    if let Some(ip) = udpgw_c.resolve_domain(&domain).await {
+                                        let dst = SocketAddr::new(ip, port);
+                                        let conid = get_or_register_conid(
+                                            &conids_c,
+                                            &udpgw_c,
+                                            &reply_c,
+                                            dst,
+                                        ).await;
+                                        udpgw_c.send_datagram(conid, dst, &payload_owned).await;
+                                    }
+                                });
+                            }
+                            None => {}
                         }
                     }
                 }
             }
 
             reply_task.abort();
-            udpgw.unregister(conid).await;
+            let registered: Vec<u16> = dst_conids.lock().await.values().copied().collect();
+            udpgw.unregister_many(&registered).await;
             Ok(())
         }
         _ => {
@@ -135,6 +181,21 @@ async fn handle_socks5_client(
             Ok(())
         }
     }
+}
+
+async fn get_or_register_conid(
+    dst_conids: &Mutex<HashMap<SocketAddr, u16>>,
+    udpgw: &UdpgwClient,
+    reply_tx: &mpsc::Sender<(SocketAddr, Vec<u8>)>,
+    dst: SocketAddr,
+) -> u16 {
+    let mut guard = dst_conids.lock().await;
+    if let Some(&id) = guard.get(&dst) {
+        return id;
+    }
+    let id = udpgw.register(reply_tx.clone()).await;
+    guard.insert(dst, id);
+    id
 }
 
 async fn read_socks_addr(stream: &mut TcpStream, atyp: u8) -> io::Result<(String, u16)> {
@@ -182,22 +243,28 @@ async fn send_socks_reply(stream: &mut TcpStream, rep: u8, addr: SocketAddr) -> 
         }
     }
     resp.extend_from_slice(&addr.port().to_be_bytes());
-    stream.write_all(&resp).await
+    stream.write_all(&resp).await?;
+    stream.flush().await
 }
 
-async fn parse_socks5_udp<'a>(packet: &'a [u8], udpgw: &UdpgwClient) -> Option<(SocketAddr, &'a [u8])> {
+enum ParsedUdpTarget {
+    Addr(SocketAddr),
+    Domain(String, u16),
+}
+
+fn parse_socks5_udp_raw(packet: &[u8]) -> Option<(ParsedUdpTarget, &[u8])> {
     if packet.len() < 4 || packet[2] != 0x00 {
         return None;
     }
     let atyp = packet[3];
-    let (addr, header_len) = match atyp {
+    match atyp {
         0x01 => {
             if packet.len() < 10 {
                 return None;
             }
             let ip = Ipv4Addr::new(packet[4], packet[5], packet[6], packet[7]);
             let port = u16::from_be_bytes([packet[8], packet[9]]);
-            (SocketAddr::new(IpAddr::V4(ip), port), 10)
+            Some((ParsedUdpTarget::Addr(SocketAddr::new(IpAddr::V4(ip), port)), &packet[10..]))
         }
         0x04 => {
             if packet.len() < 22 {
@@ -205,8 +272,14 @@ async fn parse_socks5_udp<'a>(packet: &'a [u8], udpgw: &UdpgwClient) -> Option<(
             }
             let mut ip = [0u8; 16];
             ip.copy_from_slice(&packet[4..20]);
+            let v6 = Ipv6Addr::from(ip);
             let port = u16::from_be_bytes([packet[20], packet[21]]);
-            (SocketAddr::new(IpAddr::V6(Ipv6Addr::from(ip)), port), 22)
+            let addr = if let Some(v4) = v6.to_ipv4_mapped() {
+                SocketAddr::new(IpAddr::V4(v4), port)
+            } else {
+                SocketAddr::new(IpAddr::V6(v6), port)
+            };
+            Some((ParsedUdpTarget::Addr(addr), &packet[22..]))
         }
         0x03 => {
             if packet.len() < 5 {
@@ -216,14 +289,12 @@ async fn parse_socks5_udp<'a>(packet: &'a [u8], udpgw: &UdpgwClient) -> Option<(
             if packet.len() < 5 + len + 2 {
                 return None;
             }
-            let domain = std::str::from_utf8(&packet[5..5 + len]).ok()?;
+            let domain = std::str::from_utf8(&packet[5..5 + len]).ok()?.to_string();
             let port = u16::from_be_bytes([packet[5 + len], packet[6 + len]]);
-            let ip = udpgw.resolve_domain(domain).await?;
-            (SocketAddr::new(ip, port), 7 + len)
+            Some((ParsedUdpTarget::Domain(domain, port), &packet[7 + len..]))
         }
-        _ => return None,
-    };
-    Some((addr, &packet[header_len..]))
+        _ => None,
+    }
 }
 
 fn encode_socks5_udp_header(out: &mut Vec<u8>, src: SocketAddr, payload: &[u8]) {

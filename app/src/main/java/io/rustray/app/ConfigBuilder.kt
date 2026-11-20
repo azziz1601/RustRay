@@ -259,6 +259,7 @@ object ConfigBuilder {
 
         val dns = JSONObject()
             .put("queryStrategy", "UseIPv4")
+            .put("servers", JSONArray(listOf("1.1.1.1", "8.8.8.8")))
             .put(
                 "fakeIp",
                 JSONObject()

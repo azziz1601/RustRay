@@ -580,7 +580,8 @@ class MainActivity : AppCompatActivity() {
     private fun showLogs() {
         val density = resources.displayMetrics.density
         val text = TextView(this).apply {
-            text = EventLog.dump()
+            val sshStats = RustSshBridge.statsSummary()
+            text = if (sshStats.isNotBlank()) "$sshStats\n\n${EventLog.dump()}" else EventLog.dump()
             typeface = android.graphics.Typeface.MONOSPACE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             setTextIsSelectable(true)
