@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -29,6 +30,8 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var etServer: TextInputEditText
     private lateinit var tilPort: TextInputLayout
     private lateinit var etPort: TextInputEditText
+    private lateinit var tilSshUsername: TextInputLayout
+    private lateinit var etSshUsername: TextInputEditText
     private lateinit var tilUuid: TextInputLayout
     private lateinit var etUuid: TextInputEditText
     private lateinit var tilPassword: TextInputLayout
@@ -39,6 +42,14 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var ddVmessSecurity: MaterialAutoCompleteTextView
     private lateinit var tilAlterId: TextInputLayout
     private lateinit var etAlterId: TextInputEditText
+    private lateinit var tilSshTransport: TextInputLayout
+    private lateinit var ddSshTransport: MaterialAutoCompleteTextView
+    private lateinit var tilSshPayload: TextInputLayout
+    private lateinit var etSshPayload: TextInputEditText
+    private lateinit var tilSshUdpgwPort: TextInputLayout
+    private lateinit var etSshUdpgwPort: TextInputEditText
+    private lateinit var tilSshPoolSize: TextInputLayout
+    private lateinit var etSshPoolSize: TextInputEditText
     private lateinit var tilNetwork: TextInputLayout
     private lateinit var ddNetwork: MaterialAutoCompleteTextView
     private lateinit var tilPath: TextInputLayout
@@ -47,6 +58,7 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var etHost: TextInputEditText
     private lateinit var tilServiceName: TextInputLayout
     private lateinit var etServiceName: TextInputEditText
+    private lateinit var tvSecurityHeader: TextView
     private lateinit var tilSecurity: TextInputLayout
     private lateinit var ddSecurity: MaterialAutoCompleteTextView
     private lateinit var tilSni: TextInputLayout
@@ -87,7 +99,8 @@ class EditProfileActivity : AppCompatActivity() {
             }
         }
 
-        setupDropdown(ddProtocol, Protocol.entries.map { it.label }) { normalizeSelections() }
+        setupDropdown(ddProtocol, Protocol.entries.map { it.label }) { onProtocolChanged() }
+        setupDropdown(ddSshTransport, SshTransport.entries.map { it.label }) { updateVisibility() }
         setupDropdown(ddNetwork, Network.entries.map { it.label }) { normalizeSelections() }
         setupDropdown(ddSecurity, Security.entries.map { it.label }) { normalizeSelections() }
         setupDropdown(ddFlow, flowOptions) { updateVisibility() }
@@ -96,7 +109,7 @@ class EditProfileActivity : AppCompatActivity() {
 
         if (existing != null) {
             toolbar.title = "Edit profile"
-            populate(existing)
+            populate(ConfigBuilder.hydrateFromImportedConfig(existing))
         } else {
             toolbar.title = "New profile"
             populateDefaults()
@@ -114,6 +127,8 @@ class EditProfileActivity : AppCompatActivity() {
         etServer = findViewById(R.id.etServer)
         tilPort = findViewById(R.id.tilPort)
         etPort = findViewById(R.id.etPort)
+        tilSshUsername = findViewById(R.id.tilSshUsername)
+        etSshUsername = findViewById(R.id.etSshUsername)
         tilUuid = findViewById(R.id.tilUuid)
         etUuid = findViewById(R.id.etUuid)
         tilPassword = findViewById(R.id.tilPassword)
@@ -124,6 +139,14 @@ class EditProfileActivity : AppCompatActivity() {
         ddVmessSecurity = findViewById(R.id.ddVmessSecurity)
         tilAlterId = findViewById(R.id.tilAlterId)
         etAlterId = findViewById(R.id.etAlterId)
+        tilSshTransport = findViewById(R.id.tilSshTransport)
+        ddSshTransport = findViewById(R.id.ddSshTransport)
+        tilSshPayload = findViewById(R.id.tilSshPayload)
+        etSshPayload = findViewById(R.id.etSshPayload)
+        tilSshUdpgwPort = findViewById(R.id.tilSshUdpgwPort)
+        etSshUdpgwPort = findViewById(R.id.etSshUdpgwPort)
+        tilSshPoolSize = findViewById(R.id.tilSshPoolSize)
+        etSshPoolSize = findViewById(R.id.etSshPoolSize)
         tilNetwork = findViewById(R.id.tilNetwork)
         ddNetwork = findViewById(R.id.ddNetwork)
         tilPath = findViewById(R.id.tilPath)
@@ -132,6 +155,7 @@ class EditProfileActivity : AppCompatActivity() {
         etHost = findViewById(R.id.etHost)
         tilServiceName = findViewById(R.id.tilServiceName)
         etServiceName = findViewById(R.id.etServiceName)
+        tvSecurityHeader = findViewById(R.id.tvSecurityHeader)
         tilSecurity = findViewById(R.id.tilSecurity)
         ddSecurity = findViewById(R.id.ddSecurity)
         tilSni = findViewById(R.id.tilSni)
@@ -172,6 +196,7 @@ class EditProfileActivity : AppCompatActivity() {
 
     private fun populateDefaults() {
         ddProtocol.setText(Protocol.VLESS.label, false)
+        ddSshTransport.setText(SshTransport.DIRECT.label, false)
         ddNetwork.setText(Network.TCP.label, false)
         ddSecurity.setText(Security.TLS.label, false)
         ddFlow.setText("none", false)
@@ -181,6 +206,8 @@ class EditProfileActivity : AppCompatActivity() {
         etAlterId.setText("0")
         etPath.setText("/")
         etSpiderX.setText("/")
+        etSshUdpgwPort.setText("7300")
+        etSshPoolSize.setText("2")
     }
 
     private fun populate(profile: Profile) {
@@ -188,11 +215,28 @@ class EditProfileActivity : AppCompatActivity() {
         ddProtocol.setText(profile.protocol.label, false)
         etServer.setText(profile.server)
         etPort.setText(profile.port.toString())
-        etUuid.setText(if (profile.protocol != Protocol.TROJAN) profile.credential else "")
-        etPassword.setText(if (profile.protocol == Protocol.TROJAN) profile.credential else "")
+        etSshUsername.setText(profile.sshUsername)
+        etUuid.setText(
+            if (profile.protocol == Protocol.VLESS || profile.protocol == Protocol.VMESS) {
+                profile.credential
+            } else {
+                ""
+            },
+        )
+        etPassword.setText(
+            if (profile.protocol == Protocol.TROJAN || profile.protocol == Protocol.SSH) {
+                profile.credential
+            } else {
+                ""
+            },
+        )
         ddFlow.setText(profile.flow.ifBlank { "none" }, false)
         ddVmessSecurity.setText(profile.vmessSecurity.ifBlank { "auto" }, false)
         etAlterId.setText(profile.alterId.toString())
+        ddSshTransport.setText(profile.sshTransport.label, false)
+        etSshPayload.setText(profile.sshPayload)
+        etSshUdpgwPort.setText(profile.sshUdpgwPort.toString())
+        etSshPoolSize.setText(profile.sshPoolSize.toString())
         ddNetwork.setText(profile.network.label, false)
         etPath.setText(profile.path.ifBlank { "/" })
         etHost.setText(profile.host)
@@ -206,11 +250,11 @@ class EditProfileActivity : AppCompatActivity() {
         etSpiderX.setText(profile.spiderX.ifBlank { "/" })
     }
 
-    private fun selectedProtocol(): Protocol = when (ddProtocol.text.toString()) {
-        Protocol.VMESS.label -> Protocol.VMESS
-        Protocol.TROJAN.label -> Protocol.TROJAN
-        else -> Protocol.VLESS
-    }
+    private fun selectedProtocol(): Protocol =
+        Protocol.entries.firstOrNull { it.label == ddProtocol.text.toString() } ?: Protocol.VLESS
+
+    private fun selectedSshTransport(): SshTransport =
+        SshTransport.entries.firstOrNull { it.label == ddSshTransport.text.toString() } ?: SshTransport.DIRECT
 
     private fun selectedNetwork(): Network =
         Network.entries.firstOrNull { it.label == ddNetwork.text.toString() } ?: Network.TCP
@@ -218,22 +262,79 @@ class EditProfileActivity : AppCompatActivity() {
     private fun selectedSecurity(): Security =
         Security.entries.firstOrNull { it.label == ddSecurity.text.toString() } ?: Security.TLS
 
+    private fun onProtocolChanged() {
+        val protocol = selectedProtocol()
+        if (editingId == null) {
+            val currentPort = etPort.text?.toString()?.trim()
+            if (protocol == Protocol.SSH && currentPort == "443") {
+                etPort.setText("22")
+            } else if (protocol != Protocol.SSH && currentPort == "22") {
+                etPort.setText("443")
+            }
+        }
+        normalizeSelections()
+    }
+
     private fun normalizeSelections() {
-        val security = selectedSecurity()
-        val network = selectedNetwork()
-        if (security == Security.REALITY && (network == Network.WS || network == Network.HTTPUPGRADE)) {
-            ddSecurity.setText(Security.TLS.label, false)
-            toast("REALITY is not supported over ${network.label}; switched to TLS")
+        if (selectedProtocol() != Protocol.SSH) {
+            val security = selectedSecurity()
+            val network = selectedNetwork()
+            if (security == Security.REALITY && (network == Network.WS || network == Network.HTTPUPGRADE)) {
+                ddSecurity.setText(Security.TLS.label, false)
+                toast("REALITY is not supported over ${network.label}; switched to TLS")
+            }
         }
         updateVisibility()
     }
 
     private fun updateVisibility() {
         val protocol = selectedProtocol()
+        val isSsh = protocol == Protocol.SSH
+
+        if (isSsh) {
+            val sshMode = selectedSshTransport()
+            val needsPayload = sshMode == SshTransport.PAYLOAD || sshMode == SshTransport.WS || sshMode == SshTransport.SSL_WS
+            val needsWs = sshMode == SshTransport.WS || sshMode == SshTransport.SSL_WS
+            val needsSni = sshMode == SshTransport.SSL || sshMode == SshTransport.SSL_WS
+
+            tilSshUsername.visibility = View.VISIBLE
+            tilPassword.visibility = View.VISIBLE
+            tilUuid.visibility = View.GONE
+            tilFlow.visibility = View.GONE
+            tilVmessSecurity.visibility = View.GONE
+            tilAlterId.visibility = View.GONE
+
+            tilSshTransport.visibility = View.VISIBLE
+            tilSshPayload.visibility = if (needsPayload) View.VISIBLE else View.GONE
+            tilSshUdpgwPort.visibility = View.VISIBLE
+            tilSshPoolSize.visibility = View.VISIBLE
+
+            tilNetwork.visibility = View.GONE
+            tilPath.visibility = if (needsWs) View.VISIBLE else View.GONE
+            tilHost.visibility = if (needsWs) View.VISIBLE else View.GONE
+            tilServiceName.visibility = View.GONE
+
+            tvSecurityHeader.visibility = if (needsSni) View.VISIBLE else View.GONE
+            tilSecurity.visibility = View.GONE
+            tilSni.visibility = if (needsSni) View.VISIBLE else View.GONE
+            tilFingerprint.visibility = View.GONE
+            tilAlpn.visibility = View.GONE
+            tilPublicKey.visibility = View.GONE
+            tilShortId.visibility = View.GONE
+            tilSpiderX.visibility = View.GONE
+            return
+        }
+
         val network = selectedNetwork()
         val security = selectedSecurity()
         val tlsLike = security != Security.NONE
         val framed = network == Network.WS || network == Network.HTTPUPGRADE || network == Network.XHTTP
+
+        tilSshUsername.visibility = View.GONE
+        tilSshTransport.visibility = View.GONE
+        tilSshPayload.visibility = View.GONE
+        tilSshUdpgwPort.visibility = View.GONE
+        tilSshPoolSize.visibility = View.GONE
 
         tilUuid.visibility = if (protocol == Protocol.TROJAN) View.GONE else View.VISIBLE
         tilPassword.visibility = if (protocol == Protocol.TROJAN) View.VISIBLE else View.GONE
@@ -241,10 +342,13 @@ class EditProfileActivity : AppCompatActivity() {
         tilVmessSecurity.visibility = if (protocol == Protocol.VMESS) View.VISIBLE else View.GONE
         tilAlterId.visibility = if (protocol == Protocol.VMESS) View.VISIBLE else View.GONE
 
+        tilNetwork.visibility = View.VISIBLE
         tilPath.visibility = if (framed) View.VISIBLE else View.GONE
         tilHost.visibility = if (framed) View.VISIBLE else View.GONE
         tilServiceName.visibility = if (network == Network.GRPC) View.VISIBLE else View.GONE
 
+        tvSecurityHeader.visibility = View.VISIBLE
+        tilSecurity.visibility = View.VISIBLE
         tilSni.visibility = if (tlsLike) View.VISIBLE else View.GONE
         tilFingerprint.visibility = if (tlsLike) View.VISIBLE else View.GONE
         tilAlpn.visibility = if (security == Security.TLS) View.VISIBLE else View.GONE
@@ -260,10 +364,12 @@ class EditProfileActivity : AppCompatActivity() {
         val protocol = selectedProtocol()
         val network = selectedNetwork()
         val security = selectedSecurity()
+        val sshTransport = selectedSshTransport()
         val name = etName.text?.toString()?.trim().orEmpty()
         val server = etServer.text?.toString()?.trim().orEmpty()
         val port = etPort.text?.toString()?.trim()?.toIntOrNull()
-        val credential = if (protocol == Protocol.TROJAN) {
+        val sshUsername = etSshUsername.text?.toString()?.trim().orEmpty()
+        val credential = if (protocol == Protocol.TROJAN || protocol == Protocol.SSH) {
             etPassword.text?.toString().orEmpty()
         } else {
             etUuid.text?.toString()?.trim().orEmpty()
@@ -278,6 +384,8 @@ class EditProfileActivity : AppCompatActivity() {
         } else {
             0
         }
+        val udpgwPort = etSshUdpgwPort.text?.toString()?.trim()?.toIntOrNull() ?: 7300
+        val poolSize = etSshPoolSize.text?.toString()?.trim()?.toIntOrNull() ?: 2
 
         var valid = true
         if (server.isBlank()) {
@@ -288,27 +396,46 @@ class EditProfileActivity : AppCompatActivity() {
             showError(tilPort, "Port must be 1–65535")
             valid = false
         }
-        if (protocol == Protocol.VMESS && (alterId == null || alterId !in 0..65535)) {
-            showError(tilAlterId, "Alter ID must be 0–65535")
-            valid = false
-        }
-        if (credential.isBlank()) {
-            if (protocol == Protocol.TROJAN) showError(tilPassword, "Password is required")
-            else showError(tilUuid, "UUID is required")
-            valid = false
-        }
-        if (flow.isNotEmpty() && (network != Network.TCP || security == Security.NONE)) {
-            showError(tilFlow, "Vision requires TCP with TLS or REALITY")
-            valid = false
-        }
-        if (security == Security.REALITY) {
-            if (selectedNetwork() == Network.WS || selectedNetwork() == Network.HTTPUPGRADE) {
-                showError(tilSecurity, "REALITY cannot be used over ${network.label}")
+        if (protocol == Protocol.SSH) {
+            if (sshUsername.isBlank()) {
+                showError(tilSshUsername, "Username is required")
                 valid = false
             }
-            if (etPublicKey.text?.toString()?.trim().isNullOrEmpty()) {
-                showError(tilPublicKey, "REALITY public key is required")
+            if (credential.isBlank()) {
+                showError(tilPassword, "Password is required")
                 valid = false
+            }
+            if (udpgwPort !in 1..65535) {
+                showError(tilSshUdpgwPort, "Port UDPGW must be 1–65535")
+                valid = false
+            }
+            if (poolSize !in 1..4) {
+                showError(tilSshPoolSize, "Parallel connections must be 1–4")
+                valid = false
+            }
+        } else {
+            if (protocol == Protocol.VMESS && (alterId == null || alterId !in 0..65535)) {
+                showError(tilAlterId, "Alter ID must be 0–65535")
+                valid = false
+            }
+            if (credential.isBlank()) {
+                if (protocol == Protocol.TROJAN) showError(tilPassword, "Password is required")
+                else showError(tilUuid, "UUID is required")
+                valid = false
+            }
+            if (flow.isNotEmpty() && (network != Network.TCP || security == Security.NONE)) {
+                showError(tilFlow, "Vision requires TCP with TLS or REALITY")
+                valid = false
+            }
+            if (security == Security.REALITY) {
+                if (selectedNetwork() == Network.WS || selectedNetwork() == Network.HTTPUPGRADE) {
+                    showError(tilSecurity, "REALITY cannot be used over ${network.label}")
+                    valid = false
+                }
+                if (etPublicKey.text?.toString()?.trim().isNullOrEmpty()) {
+                    showError(tilPublicKey, "REALITY public key is required")
+                    valid = false
+                }
             }
         }
         if (!valid || port == null) return
@@ -334,7 +461,12 @@ class EditProfileActivity : AppCompatActivity() {
             path = etPath.text?.toString()?.trim().orEmpty().ifBlank { "/" },
             host = etHost.text?.toString()?.trim().orEmpty(),
             serviceName = etServiceName.text?.toString()?.trim().orEmpty(),
-            importedConfig = importedConfig,
+            sshUsername = sshUsername,
+            sshTransport = sshTransport,
+            sshPayload = etSshPayload.text?.toString().orEmpty(),
+            sshUdpgwPort = udpgwPort,
+            sshPoolSize = poolSize,
+            importedConfig = null,
             plaintext = protocol == Protocol.VLESS && security == Security.NONE,
         )
         store.upsert(profile)
@@ -345,8 +477,9 @@ class EditProfileActivity : AppCompatActivity() {
 
     private fun clearErrors() {
         listOf(
-            tilName, tilServer, tilPort, tilUuid, tilPassword, tilFlow,
-            tilVmessSecurity, tilAlterId, tilNetwork, tilPath, tilHost, tilServiceName,
+            tilName, tilServer, tilPort, tilSshUsername, tilUuid, tilPassword, tilFlow,
+            tilVmessSecurity, tilAlterId, tilSshTransport, tilSshPayload, tilSshUdpgwPort,
+            tilSshPoolSize, tilNetwork, tilPath, tilHost, tilServiceName,
             tilSecurity, tilSni, tilFingerprint, tilAlpn, tilPublicKey,
             tilShortId, tilSpiderX,
         ).forEach { it.error = null }

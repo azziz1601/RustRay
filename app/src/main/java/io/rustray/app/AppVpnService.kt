@@ -81,6 +81,40 @@ class AppVpnService : XrayVpnService() {
         }
         startForegroundCompat(progressNotification("Connecting…", profile))
 
+        if (profile.protocol == Protocol.SSH) {
+            Thread({
+                val socksPort = try {
+                    RustSshBridge.start(profile, settings, this)
+                } catch (error: Throwable) {
+                    fail("SSH error: ${safeMessage(error)}")
+                    return@Thread
+                }
+                if (VpnState.phase != VpnPhase.CONNECTING || currentProfile?.id != profile.id) {
+                    RustSshBridge.stop()
+                    return@Thread
+                }
+                EventLog.add("SSH ready on 127.0.0.1:$socksPort (UDPGW ${profile.sshUdpgwPort}, pool ${profile.sshPoolSize})")
+                val config = try {
+                    ConfigBuilder.configForSsh(socksPort, settings)
+                } catch (error: Throwable) {
+                    RustSshBridge.stop()
+                    fail("Cannot build SSH config: ${safeMessage(error)}")
+                    return@Thread
+                }
+                try {
+                    startXrayTunnel(
+                        configJson = config,
+                        tunRuntimeProfile = settings.runtimeProfile.toSdk(),
+                        tunMtu = settings.tunMtu,
+                    )
+                } catch (error: Throwable) {
+                    RustSshBridge.stop()
+                    fail("Cannot start tunnel: ${safeMessage(error)}")
+                }
+            }, "rustray-ssh-start").apply { isDaemon = true }.start()
+            return
+        }
+
         val config = try {
             ConfigBuilder.configFor(profile, settings)
         } catch (error: Throwable) {
@@ -153,6 +187,7 @@ class AppVpnService : XrayVpnService() {
         EventLog.add("Stopping tunnel")
         runCatching { stopXrayTunnel() }
             .onFailure { EventLog.add("Stop failed: ${safeMessage(it)}") }
+        RustSshBridge.stop()
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.stopped()
         currentProfile = null
@@ -235,6 +270,7 @@ class AppVpnService : XrayVpnService() {
 
     override fun onXrayNetworkRebind(result: XrayNetworkRebindResult) {
         EventLog.add("Network changed · tunnel rebind requested (generation ${result.sessionGeneration})")
+        if (currentProfile?.protocol == Protocol.SSH) RustSshBridge.rebind()
     }
 
     override fun onXrayNetworkChangeError(error: Exception) {
@@ -244,6 +280,7 @@ class AppVpnService : XrayVpnService() {
     override fun onRevoke() {
         EventLog.add("VPN permission revoked by the system")
         runCatching { stopXrayTunnel() }
+        RustSshBridge.stop()
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.failed("VPN access was revoked")
         currentProfile = null
@@ -253,6 +290,7 @@ class AppVpnService : XrayVpnService() {
     }
 
     override fun onDestroy() {
+        RustSshBridge.stop()
         instance = null
         super.onDestroy()
         if (VpnState.phase == VpnPhase.CONNECTED ||
@@ -279,6 +317,7 @@ class AppVpnService : XrayVpnService() {
     }
 
     private fun fail(message: String) {
+        RustSshBridge.stop()
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.failed(message)
         EventLog.add("Connection failed: $message")

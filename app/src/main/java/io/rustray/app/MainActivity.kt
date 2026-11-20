@@ -188,6 +188,14 @@ class MainActivity : AppCompatActivity() {
         val profiles = store.load()
         cachedProfiles = profiles
         var selectedId = store.selectedId()
+        val isVpnActive = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
+        val activeId = VpnState.profileId?.takeIf { id -> isVpnActive && profiles.any { it.id == id } }
+        if (activeId != null) {
+            selectedId = activeId
+            if (store.selectedId() != activeId) {
+                store.select(activeId)
+            }
+        }
         if (selectedId != null && profiles.none { it.id == selectedId }) {
             selectedId = null
         }
@@ -212,10 +220,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openEditor(profile: Profile?) {
-        if (profile?.isImported == true) {
-            toast("Imported profiles are read-only")
-            return
-        }
         startActivity(
             Intent(this, EditProfileActivity::class.java).apply {
                 profile?.let { putExtra(EditProfileActivity.EXTRA_PROFILE_ID, it.id) }
@@ -488,11 +492,15 @@ class MainActivity : AppCompatActivity() {
         try {
             val profile = buildImportedProfile(link)
             store.upsert(profile)
-            store.select(profile.id)
+            val isVpnActive = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
+            if (!isVpnActive || store.selectedId() == null) {
+                store.select(profile.id)
+            }
             refreshProfiles()
             refreshUi()
             val note = if (profile.plaintext) " (no TLS)" else ""
-            toast("Imported ${profile.name}$note")
+            val activeNote = if (isVpnActive) ", active profile unchanged" else ""
+            toast("Imported ${profile.name}$note$activeNote")
         } catch (error: Throwable) {
             val detail = error.message?.lineSequence()?.firstOrNull()?.take(200)
                 ?: error.javaClass.simpleName
@@ -521,27 +529,31 @@ class MainActivity : AppCompatActivity() {
             } else {
                 imported.configJson
             }
-            return Profile(
-                name = prepared.name.ifBlank { prepared.originalHost },
-                protocol = Protocol.VLESS,
-                server = prepared.originalHost,
-                port = prepared.port,
-                credential = "",
-                security = Security.fromWire(prepared.security),
-                network = Network.fromWire(prepared.network),
-                importedConfig = config,
-                plaintext = prepared.plaintext,
+            return ConfigBuilder.hydrateFromImportedConfig(
+                Profile(
+                    name = prepared.name.ifBlank { prepared.originalHost },
+                    protocol = Protocol.VLESS,
+                    server = prepared.originalHost,
+                    port = prepared.port,
+                    credential = "",
+                    security = Security.fromWire(prepared.security),
+                    network = Network.fromWire(prepared.network),
+                    importedConfig = config,
+                    plaintext = prepared.plaintext,
+                ),
             )
         }
 
         val imported = XrayProfileImporter.profile(link, format)
-        return Profile(
-            name = imported.name.ifBlank { imported.serverAddress },
-            protocol = if (format == XrayProfileFormat.Vmess) Protocol.VMESS else Protocol.TROJAN,
-            server = imported.serverAddress,
-            port = extractPort(link),
-            credential = "",
-            importedConfig = imported.configJson,
+        return ConfigBuilder.hydrateFromImportedConfig(
+            Profile(
+                name = imported.name.ifBlank { imported.serverAddress },
+                protocol = if (format == XrayProfileFormat.Vmess) Protocol.VMESS else Protocol.TROJAN,
+                server = imported.serverAddress,
+                port = extractPort(link),
+                credential = "",
+                importedConfig = imported.configJson,
+            ),
         )
     }
 

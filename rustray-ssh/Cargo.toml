@@ -1,0 +1,29 @@
+[package]
+name = "rustray-ssh"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance native Rust SSH + BadVPN UDPGW client bridge for RustRay Android"
+
+[lib]
+name = "rustray_ssh"
+crate-type = ["cdylib"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+russh = { version = "0.52", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+socket2 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jni = "0.21"
+log = "0.4"
+android_logger = "0.14"
+base64 = "0.22"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

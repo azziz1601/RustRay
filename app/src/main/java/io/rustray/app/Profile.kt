@@ -7,11 +7,25 @@ import java.util.UUID
 enum class Protocol(val wire: String, val label: String) {
     VLESS("vless", "VLESS"),
     VMESS("vmess", "VMess"),
-    TROJAN("trojan", "Trojan");
+    TROJAN("trojan", "Trojan"),
+    SSH("ssh", "SSH");
 
     companion object {
         fun fromWire(value: String?): Protocol =
             entries.firstOrNull { it.wire == value } ?: VLESS
+    }
+}
+
+enum class SshTransport(val wire: String, val label: String) {
+    DIRECT("direct", "Direct"),
+    PAYLOAD("payload", "HTTP Payload"),
+    SSL("ssl", "SSL / SNI"),
+    WS("ws", "WebSocket"),
+    SSL_WS("ssl_ws", "SSL + WebSocket");
+
+    companion object {
+        fun fromWire(value: String?): SshTransport =
+            entries.firstOrNull { it.wire == value } ?: DIRECT
     }
 }
 
@@ -60,6 +74,11 @@ data class Profile(
     val path: String = "/",
     val host: String = "",
     val serviceName: String = "",
+    val sshUsername: String = "",
+    val sshTransport: SshTransport = SshTransport.DIRECT,
+    val sshPayload: String = "",
+    val sshUdpgwPort: Int = 7300,
+    val sshPoolSize: Int = 2,
     val importedConfig: String? = null,
     val plaintext: Boolean = false,
 ) {
@@ -88,6 +107,11 @@ data class Profile(
         .put("path", path)
         .put("host", host)
         .put("serviceName", serviceName)
+        .put("sshUsername", sshUsername)
+        .put("sshTransport", sshTransport.wire)
+        .put("sshPayload", sshPayload)
+        .put("sshUdpgwPort", sshUdpgwPort)
+        .put("sshPoolSize", sshPoolSize)
         .put("plaintext", plaintext)
         .apply { importedConfig?.let { put("importedConfig", it) } }
 
@@ -113,6 +137,11 @@ data class Profile(
             path = json.optString("path", "/"),
             host = json.optString("host"),
             serviceName = json.optString("serviceName"),
+            sshUsername = json.optString("sshUsername"),
+            sshTransport = SshTransport.fromWire(json.optString("sshTransport")),
+            sshPayload = json.optString("sshPayload"),
+            sshUdpgwPort = json.optInt("sshUdpgwPort", 7300).coerceIn(1, 65535),
+            sshPoolSize = json.optInt("sshPoolSize", 2).coerceIn(1, 4),
             importedConfig = json.optString("importedConfig")
                 .takeIf { it.isNotEmpty() && it != "null" },
             plaintext = json.optBoolean("plaintext", false),

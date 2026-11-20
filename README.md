@@ -18,6 +18,7 @@ Supported link formats:
 - `trojan://`
 
 Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
+Manual SSH profiles add direct, payload, WebSocket, SSL, and SSL+WebSocket modes with pooled connections and BadVPN UDPGW.
 
 > RustRay uses **xray-rust**, an independent, client-only Rust reimplementation.
 > It is not the official XTLS Go [Xray-core](https://github.com/XTLS/Xray-core)
@@ -28,7 +29,7 @@ Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
 
 - Add, edit, and delete connection profiles; pick the active one.
 - Import `vless://`, `vmess://`, or `trojan://` links from the clipboard. Imported
-  profiles are read-only.
+  profiles are editable; saving clears the original imported config.
 - Connect and disconnect with Android's standard VPN permission prompt and a
   foreground notification (works on Android 14+).
 - Show live upload/download speed, total traffic, session duration, and the
@@ -44,6 +45,8 @@ Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
 - Offer a gaming preset with a 1380 MTU and throughput-oriented tuning.
 - Build the TUN configuration locally with fake-IP DNS, direct routing for
   private addresses, and HTTP/TLS/QUIC sniffing.
+- Run SSH accounts through a native Rust bridge with a local SOCKS5 endpoint,
+  five transport modes, pooled connections, and optional UDPGW.
 
 ## Download the APK
 
@@ -58,7 +61,7 @@ Every push to `main` builds release APKs with GitHub Actions.
 
 You can also trigger a build manually with **Run workflow** on the Actions page.
 
-The package name is `io.rustray.app`, version 1.1.0 (`versionCode` 3),
+The package name is `io.rustray.app`, version 1.2.1 (`versionCode` 4),
 `minSdk` 24, and `targetSdk` 35.
 
 ## Build it yourself
@@ -67,12 +70,17 @@ You need:
 
 - JDK 17 or newer
 - Android SDK with platform 35 and build-tools 35.0.0
+- Rust toolchain with `aarch64-linux-android` and `armv7-linux-androideabi` targets
+- `cargo-ndk` for the native SSH library
 - Gradle (the repository includes the Gradle wrapper, so you do not need to
   install Gradle separately)
 
 ```bash
 export ANDROID_HOME=/path/to/android-sdk
 echo "sdk.dir=$ANDROID_HOME" > local.properties
+cd rustray-ssh
+cargo ndk -t arm64-v8a -t armeabi-v7a --platform 24 -o ../app/src/main/jniLibs build --release
+cd ..
 ./gradlew assembleRelease
 ```
 
@@ -97,8 +105,11 @@ it can produce APKs that devices treat as official updates.
 
 - REALITY does not work over WebSocket or HTTPUpgrade with the current core;
   the form automatically switches those combinations to TLS.
-- Profiles imported from links cannot be edited in the app. Delete and import
-  them again instead.
+- Editing an imported profile clears its original `importedConfig`; fields not
+  represented in the editor can be lost.
+- The SSH engine ships only for `arm64-v8a` and `armeabi-v7a`; other ABIs and
+  emulators cannot load SSH profiles. SSH connections accept any server
+  certificate or host key, so use only trusted endpoints.
 - VLESS without TLS is unencrypted. The core rejects such outbound connections
   to public hosts, so RustRay uses a single-label DNS alias and a `dns.hosts`
   entry to keep those links working. Only use this with providers that
@@ -122,6 +133,8 @@ it can produce APKs that devices treat as official updates.
 | `ShizukuCaptivePortal.kt` | Optional captive-portal disable/restore via Shizuku |
 | `MainActivity.kt` | Home screen, connect button, profile list, clipboard import, event log |
 | `EditProfileActivity.kt` | Profile editor (protocol, credentials, transport, security) |
+| `RustSshBridge.kt` | JNI entry point for the native SSH engine |
+| `rustray-ssh/` | Rust SSH, SOCKS5, and UDPGW core built by GitHub Actions |
 
 ## Credits
 
@@ -130,3 +143,4 @@ it can produce APKs that devices treat as official updates.
   [@aimalygin](https://github.com/aimalygin)
 - [XTLS/Xray-core](https://github.com/XTLS/Xray-core) as the reference project
 - [Shizuku](https://github.com/RikkaApps/Shizuku) for optional privileged helpers
+- [russh](https://github.com/warp-tech/russh) for the SSH protocol implementation.

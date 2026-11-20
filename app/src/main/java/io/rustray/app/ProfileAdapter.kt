@@ -67,7 +67,7 @@ class ProfileAdapter(
                 onDelete(profile)
                 true
             }
-            edit.visibility = if (profile.isImported) View.GONE else View.VISIBLE
+            edit.visibility = View.VISIBLE
             edit.setOnClickListener { onEdit(profile) }
         }
     }

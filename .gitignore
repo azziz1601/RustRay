@@ -9,3 +9,6 @@ local.properties
 *.jks
 keystore.properties
 .DS_Store
+.state-memory-mcp
+rustray-ssh/target/
+app/src/main/jniLibs/

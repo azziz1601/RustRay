@@ -10,6 +10,197 @@ import org.json.JSONObject
  */
 object ConfigBuilder {
 
+
+    /**
+     * Populates editable [Profile] fields from [Profile.importedConfig] so imported
+     * profiles can be opened and modified in [EditProfileActivity] with all fields pre-filled.
+     */
+    fun hydrateFromImportedConfig(profile: Profile): Profile {
+        val raw = profile.importedConfig?.takeIf { it.isNotBlank() } ?: return profile
+        return runCatching {
+            val root = JSONObject(raw)
+            val outbounds = root.optJSONArray("outbounds") ?: return profile
+            var proxy: JSONObject? = null
+            for (i in 0 until outbounds.length()) {
+                val ob = outbounds.optJSONObject(i) ?: continue
+                val proto = ob.optString("protocol").lowercase()
+                if (ob.optString("tag") == "proxy" || proto in listOf("vless", "vmess", "trojan")) {
+                    proxy = ob
+                    break
+                }
+            }
+            proxy ?: return profile
+
+            val proto = when (proxy.optString("protocol").lowercase()) {
+                "vless" -> Protocol.VLESS
+                "vmess" -> Protocol.VMESS
+                "trojan" -> Protocol.TROJAN
+                else -> profile.protocol
+            }
+            val settings = proxy.optJSONObject("settings") ?: JSONObject()
+
+            var server = profile.server
+            var port = profile.port
+            var credential = profile.credential
+            var flow = profile.flow
+            var vmessSecurity = profile.vmessSecurity
+            var alterId = profile.alterId
+
+            when (proto) {
+                Protocol.VLESS, Protocol.VMESS -> {
+                    val vnext = settings.optJSONArray("vnext")?.optJSONObject(0)
+                    if (vnext != null) {
+                        val addr = vnext.optString("address")
+                        if (server.isBlank() && addr.isNotBlank()) server = addr
+                        val p = vnext.optInt("port", 0)
+                        if (p in 1..65535) port = p
+                        val user = vnext.optJSONArray("users")?.optJSONObject(0)
+                        if (user != null) {
+                            credential = user.optString("id").ifBlank { credential }
+                            if (proto == Protocol.VLESS) {
+                                flow = user.optString("flow").ifBlank { flow }
+                            } else {
+                                vmessSecurity = user.optString("security").ifBlank { vmessSecurity }
+                                alterId = user.optInt("alterId", alterId)
+                            }
+                        }
+                    }
+                }
+
+                Protocol.TROJAN -> {
+                    val srv = settings.optJSONArray("servers")?.optJSONObject(0)
+                    if (srv != null) {
+                        val addr = srv.optString("address")
+                        if (server.isBlank() && addr.isNotBlank()) server = addr
+                        val p = srv.optInt("port", 0)
+                        if (p in 1..65535) port = p
+                        credential = srv.optString("password").ifBlank { credential }
+                    }
+                }
+
+                Protocol.SSH -> Unit
+            }
+
+            val stream = proxy.optJSONObject("streamSettings") ?: JSONObject()
+            val netWire = stream.optString("network").lowercase()
+            val network = when (netWire) {
+                "ws", "websocket" -> Network.WS
+                "httpupgrade" -> Network.HTTPUPGRADE
+                "grpc" -> Network.GRPC
+                "xhttp", "splithttp" -> Network.XHTTP
+                "tcp", "raw" -> Network.TCP
+                else -> profile.network
+            }
+
+            var path = profile.path
+            var host = profile.host
+            var serviceName = profile.serviceName
+
+            when (network) {
+                Network.WS -> {
+                    val ws = stream.optJSONObject("wsSettings")
+                    if (ws != null) {
+                        path = ws.optString("path").ifBlank { path }
+                        val headerHost = ws.optJSONObject("headers")?.optString("Host").orEmpty()
+                        host = ws.optString("host").ifBlank { headerHost }.ifBlank { host }
+                    }
+                }
+
+                Network.HTTPUPGRADE -> {
+                    val hu = stream.optJSONObject("httpupgradeSettings")
+                    if (hu != null) {
+                        path = hu.optString("path").ifBlank { path }
+                        host = hu.optString("host").ifBlank { host }
+                    }
+                }
+
+                Network.XHTTP -> {
+                    val xh = stream.optJSONObject("xhttpSettings")
+                        ?: stream.optJSONObject("splithttpSettings")
+                    if (xh != null) {
+                        path = xh.optString("path").ifBlank { path }
+                        host = xh.optString("host").ifBlank { host }
+                    }
+                }
+
+                Network.GRPC -> {
+                    val grpc = stream.optJSONObject("grpcSettings")
+                    if (grpc != null) {
+                        serviceName = grpc.optString("serviceName").ifBlank { serviceName }
+                    }
+                }
+
+                Network.TCP -> Unit
+            }
+
+            val secWire = stream.optString("security").lowercase()
+            val security = when (secWire) {
+                "tls" -> Security.TLS
+                "reality" -> Security.REALITY
+                "none", "" -> if (stream.has("security")) Security.NONE else profile.security
+                else -> profile.security
+            }
+
+            var sni = profile.sni
+            var fingerprint = profile.fingerprint
+            var alpn = profile.alpn
+            var publicKey = profile.publicKey
+            var shortId = profile.shortId
+            var spiderX = profile.spiderX
+
+            when (security) {
+                Security.TLS -> {
+                    val tls = stream.optJSONObject("tlsSettings")
+                    if (tls != null) {
+                        sni = tls.optString("serverName").ifBlank { sni }
+                        fingerprint = tls.optString("fingerprint").ifBlank { fingerprint }
+                        val alpnArr = tls.optJSONArray("alpn")
+                        if (alpnArr != null && alpnArr.length() > 0) {
+                            alpn = (0 until alpnArr.length())
+                                .mapNotNull { alpnArr.optString(it).takeIf { v -> v.isNotBlank() } }
+                                .joinToString(",")
+                        }
+                    }
+                }
+
+                Security.REALITY -> {
+                    val reality = stream.optJSONObject("realitySettings")
+                    if (reality != null) {
+                        sni = reality.optString("serverName").ifBlank { sni }
+                        fingerprint = reality.optString("fingerprint").ifBlank { fingerprint }
+                        publicKey = reality.optString("publicKey").ifBlank { publicKey }
+                        shortId = reality.optString("shortId").ifBlank { shortId }
+                        spiderX = reality.optString("spiderX").ifBlank { spiderX }
+                    }
+                }
+
+                Security.NONE -> Unit
+            }
+
+            profile.copy(
+                protocol = proto,
+                server = server,
+                port = port,
+                credential = credential,
+                flow = flow,
+                vmessSecurity = vmessSecurity,
+                alterId = alterId,
+                security = security,
+                sni = sni,
+                fingerprint = fingerprint,
+                alpn = alpn,
+                publicKey = publicKey,
+                shortId = shortId,
+                spiderX = spiderX,
+                network = network,
+                path = path,
+                host = host,
+                serviceName = serviceName,
+                plaintext = proto == Protocol.VLESS && security == Security.NONE,
+            )
+        }.getOrDefault(profile)
+    }
+
     fun configFor(profile: Profile, settings: AppSettings = AppSettings()): String {
         val root = profile.importedConfig
             ?.takeIf { it.isNotBlank() }
@@ -17,6 +208,73 @@ object ConfigBuilder {
             ?: build(profile)
         applySettings(root, settings)
         return PlaintextVlessCompat.rewriteConfig(root.toString(2))
+    }
+
+    fun configForSsh(socksPort: Int, settings: AppSettings = AppSettings()): String {
+        val inbound = JSONObject()
+            .put("tag", "tun-in")
+            .put("protocol", "tun")
+            .put("listen", "127.0.0.1")
+            .put("port", 0)
+            .put("settings", JSONObject())
+            .put(
+                "sniffing",
+                JSONObject()
+                    .put("enabled", true)
+                    .put("destOverride", JSONArray(listOf("http", "tls", "quic")))
+                    .put("metadataOnly", false),
+            )
+
+        val proxy = JSONObject()
+            .put("tag", "proxy")
+            .put("protocol", "socks")
+            .put(
+                "settings",
+                JSONObject().put(
+                    "servers",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("address", "127.0.0.1")
+                            .put("port", socksPort),
+                    ),
+                ),
+            )
+
+        val direct = JSONObject()
+            .put("tag", "direct")
+            .put("protocol", "freedom")
+            .put("settings", JSONObject())
+
+        val routing = JSONObject()
+            .put("domainStrategy", "AsIs")
+            .put(
+                "rules",
+                JSONArray().put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("ip", JSONArray(listOf("geoip:private", "127.0.0.0/8", "fd00::/8")))
+                        .put("outboundTag", "direct"),
+                ),
+            )
+
+        val dns = JSONObject()
+            .put("queryStrategy", "UseIPv4")
+            .put(
+                "fakeIp",
+                JSONObject()
+                    .put("enabled", true)
+                    .put("ipv4Pool", "198.19.0.0/16")
+                    .put("poolSize", 32768)
+                    .put("ttl", 60),
+            )
+
+        val root = JSONObject()
+            .put("inbounds", JSONArray().put(inbound))
+            .put("outbounds", JSONArray().put(proxy).put(direct))
+            .put("routing", routing)
+            .put("dns", dns)
+        applySettings(root, settings)
+        return root.toString(2)
     }
 
     private fun applySettings(root: JSONObject, settings: AppSettings) {
@@ -167,6 +425,8 @@ object ConfigBuilder {
                     .put("password", profile.credential),
             ),
         )
+
+        Protocol.SSH -> throw IllegalStateException("Use ConfigBuilder.configForSsh for SSH profiles")
     }
 
     private fun streamSettings(profile: Profile): JSONObject {
