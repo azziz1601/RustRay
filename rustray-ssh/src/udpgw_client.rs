@@ -87,6 +87,7 @@ impl UdpgwClient {
 
     pub async fn send_datagram(&self, conid: u16, dst: SocketAddr, payload: &[u8]) {
         let normalized_dst = normalize_socket_addr(dst);
+        self.stats.set_last_dst(normalized_dst.to_string());
         let mut flags = 0u8;
         if self.rebind_pending.swap(false, Ordering::AcqRel) {
             flags |= UDPGW_CLIENT_FLAG_REBIND;
@@ -207,6 +208,24 @@ async fn run_udpgw_loop(
             .udpgw_written_bytes
             .fetch_add(keepalive_buf.len() as u64, Ordering::Relaxed);
 
+        // Send a 1-packet DNS probe (one.one.one.one -> 1.1.1.1:53) on conid 65530 to verify UDPGW server reply
+        if let Some(probe_dns) = build_dns_a_query(0xBEEF, "one.one.one.one") {
+            let mut probe_frame = Vec::with_capacity(64);
+            if encode_client_packet_into(
+                &mut probe_frame,
+                0,
+                65530,
+                SocketAddr::from(([1, 1, 1, 1], 53)),
+                &probe_dns,
+            ) {
+                if tx_ch.data(&probe_frame[..]).await.is_ok() {
+                    stats
+                        .udpgw_written_bytes
+                        .fetch_add(probe_frame.len() as u64, Ordering::Relaxed);
+                }
+            }
+        }
+
         let routes_reader = Arc::clone(&routes);
         let stats_reader = Arc::clone(&stats);
         let mut read_task = tokio::spawn(async move {
@@ -231,11 +250,15 @@ async fn run_udpgw_loop(
                             if frame_len > 0 {
                                 let body = &acc[offset + 2..offset + total];
                                 if let Some(pkt) = decode_server_packet(body) {
-                                    stats_reader.udp_rx_packets.fetch_add(1, Ordering::Relaxed);
-                                    let guard = routes_reader.read().await;
-                                    if let Some(reply_tx) = guard.get(&pkt.conid) {
-                                        let _ = reply_tx
-                                            .try_send((pkt.src_addr, pkt.payload.to_vec()));
+                                    if pkt.conid == 65530 {
+                                        stats_reader.udpgw_probe_ok.store(true, Ordering::Relaxed);
+                                    } else {
+                                        stats_reader.udp_rx_packets.fetch_add(1, Ordering::Relaxed);
+                                        let guard = routes_reader.read().await;
+                                        if let Some(reply_tx) = guard.get(&pkt.conid) {
+                                            let _ = reply_tx
+                                                .try_send((pkt.src_addr, pkt.payload.to_vec()));
+                                        }
                                     }
                                 }
                             }

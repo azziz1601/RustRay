@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use russh::client::{self, Handle, Msg};
-use russh::keys::PublicKey;
+use russh::keys::PublicKeyOrCertificate;
 use russh::{cipher, compression, Channel, Preferred};
 use tokio::sync::Mutex;
 
@@ -19,7 +19,7 @@ impl client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        _server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }
@@ -161,6 +161,7 @@ impl SshPool {
 
         let mut preferred = Preferred::default();
         preferred.cipher = Cow::Borrowed(&[
+            cipher::AES_128_GCM,
             cipher::AES_256_GCM,
             cipher::CHACHA20_POLY1305,
             cipher::AES_128_CTR,
@@ -173,6 +174,7 @@ impl SshPool {
             maximum_packet_size: 32 * 1024,
             keepalive_interval: Some(Duration::from_secs(15)),
             keepalive_max: 2,
+            nodelay: true,
             preferred,
             ..Default::default()
         });
