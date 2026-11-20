@@ -132,9 +132,8 @@ impl SshPool {
 
         let mut preferred = Preferred::default();
         preferred.cipher = Cow::Borrowed(&[
-            cipher::AES_128_GCM,
-            cipher::CHACHA20_POLY1305,
             cipher::AES_256_GCM,
+            cipher::CHACHA20_POLY1305,
             cipher::AES_128_CTR,
             cipher::AES_256_CTR,
         ]);
