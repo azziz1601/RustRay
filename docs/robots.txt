@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://azziz1601.github.io/RustRay/sitemap.xml
