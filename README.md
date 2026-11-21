@@ -67,7 +67,7 @@ cd ..
 ./gradlew assembleRelease
 ```
 
-For GitHub Actions automated builds and setting up your private `.rr` encryption key (`RR_MASTER_SECRET`) and release signing (`KEYSTORE_BASE64`, `KEYSTORE_PROPERTIES`), see [RR_SECRET_SETUP.md](RR_SECRET_SETUP.md).
+For GitHub Actions automated builds and setting up your private `.rr` encryption key (`RR_MASTER_SECRET`) and release signing (`KEYSTORE_BASE64`, `KEYSTORE_PROPERTIES`), see [RR_SECRET_SETUP.md (English)](RR_SECRET_SETUP.en.md).
 
 ---
 

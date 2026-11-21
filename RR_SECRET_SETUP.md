@@ -1,4 +1,5 @@
 # Panduan Setup Kunci Rahasia Enkripsi `.rr` (`RR_MASTER_SECRET`)
+[English](RR_SECRET_SETUP.en.md) | [Bahasa Indonesia](RR_SECRET_SETUP.md)
 
 Karena repositori RustRay bersifat open-source di GitHub, kunci produksi untuk enkripsi file `.rr` (`AES-256-GCM`) **tidak disimpan di dalam source code**. Sebagai gantinya, `rustray-ssh/build.rs` menyuntikkan kunci tersebut pada saat kompilasi (*compile-time key injection*) melalui **GitHub Actions Secret**.
 
