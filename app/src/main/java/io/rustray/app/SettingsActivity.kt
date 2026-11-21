@@ -9,6 +9,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.appbar.MaterialToolbar
@@ -26,11 +28,13 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var toolbar: MaterialToolbar
     private lateinit var btnPresetGaming: MaterialButton
     private lateinit var btnPresetDefault: MaterialButton
+    private lateinit var ddLanguage: MaterialAutoCompleteTextView
     private lateinit var etMtu: TextInputEditText
     private lateinit var ddRuntimeProfile: MaterialAutoCompleteTextView
     private lateinit var swIpv6: MaterialSwitch
     private lateinit var swRebind: MaterialSwitch
     private lateinit var swBindUnderlying: MaterialSwitch
+    private lateinit var swNotifTraffic: MaterialSwitch
     private lateinit var swSniffing: MaterialSwitch
     private lateinit var swSniffingMetadata: MaterialSwitch
     private lateinit var swFakeIp: MaterialSwitch
@@ -46,6 +50,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var btnCaptiveOff: MaterialButton
     private lateinit var btnCaptiveOn: MaterialButton
 
+    private var selectedLanguage: AppLanguage = AppLanguage.EN
     private var selectedProfile: TunProfileOption = TunProfileOption.MOBILE_PLUS
     private var selectedQueryStrategy: String = "UseIPv4"
     private var selectedSplitMode: SplitTunnelMode = SplitTunnelMode.ALL
@@ -55,9 +60,9 @@ class SettingsActivity : AppCompatActivity() {
         if (requestCode == REQ_SHIZUKU) {
             runOnUiThread {
                 val msg = if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                    "Izin Shizuku aktif"
+                    getString(R.string.toast_shizuku_granted)
                 } else {
-                    "Izin Shizuku ditolak"
+                    getString(R.string.toast_shizuku_denied)
                 }
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 refreshShizukuUi()
@@ -90,12 +95,12 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         btnPresetGaming.setOnClickListener {
-            loadIntoUi(AppSettings.gamingPreset(selectedApps.toSet(), selectedSplitMode))
-            Toast.makeText(this, "Mode Game diterapkan. Tekan centang untuk menyimpan.", Toast.LENGTH_SHORT).show()
+            loadIntoUi(AppSettings.gamingPreset(selectedApps.toSet(), selectedSplitMode, selectedLanguage))
+            Toast.makeText(this, getString(R.string.toast_preset_game), Toast.LENGTH_SHORT).show()
         }
         btnPresetDefault.setOnClickListener {
-            loadIntoUi(AppSettings())
-            Toast.makeText(this, "Setelan standar diterapkan. Tekan centang untuk menyimpan.", Toast.LENGTH_SHORT).show()
+            loadIntoUi(AppSettings(language = selectedLanguage))
+            Toast.makeText(this, getString(R.string.toast_preset_default), Toast.LENGTH_SHORT).show()
         }
         swSniffing.setOnCheckedChangeListener { _, checked ->
             swSniffingMetadata.visibility = if (checked) View.VISIBLE else View.GONE
@@ -130,11 +135,13 @@ class SettingsActivity : AppCompatActivity() {
         toolbar = findViewById(R.id.toolbarSettings)
         btnPresetGaming = findViewById(R.id.btnPresetGaming)
         btnPresetDefault = findViewById(R.id.btnPresetDefault)
+        ddLanguage = findViewById(R.id.ddLanguage)
         etMtu = findViewById(R.id.etMtu)
         ddRuntimeProfile = findViewById(R.id.ddRuntimeProfile)
         swIpv6 = findViewById(R.id.swIpv6)
         swRebind = findViewById(R.id.swRebind)
         swBindUnderlying = findViewById(R.id.swBindUnderlying)
+        swNotifTraffic = findViewById(R.id.swNotifTraffic)
         swSniffing = findViewById(R.id.swSniffing)
         swSniffingMetadata = findViewById(R.id.swSniffingMetadata)
         swFakeIp = findViewById(R.id.swFakeIp)
@@ -163,6 +170,20 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupDropdowns() {
+        val languages = AppLanguage.entries
+        ddLanguage.setAdapter(
+            ArrayAdapter(this, android.R.layout.simple_list_item_1, languages.map { it.label }),
+        )
+        ddLanguage.setOnItemClickListener { _, _, position, _ ->
+            val chosen = languages[position]
+            if (chosen != selectedLanguage) {
+                selectedLanguage = chosen
+                val current = store.load()
+                store.save(current.copy(language = chosen))
+                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(chosen.tag))
+            }
+        }
+
         val profiles = TunProfileOption.entries
         ddRuntimeProfile.setAdapter(
             ArrayAdapter(this, android.R.layout.simple_list_item_1, profiles.map { it.label }),
@@ -181,7 +202,7 @@ class SettingsActivity : AppCompatActivity() {
 
         val splitModes = SplitTunnelMode.entries
         ddSplitMode.setAdapter(
-            ArrayAdapter(this, android.R.layout.simple_list_item_1, splitModes.map { it.label }),
+            ArrayAdapter(this, android.R.layout.simple_list_item_1, splitModes.map { getString(it.labelRes) }),
         )
         ddSplitMode.setOnItemClickListener { _, _, position, _ ->
             selectedSplitMode = splitModes[position]
@@ -190,12 +211,15 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadIntoUi(settings: AppSettings) {
+        selectedLanguage = settings.language
+        ddLanguage.setText(selectedLanguage.label, false)
         etMtu.setText(settings.tunMtu.toString())
         selectedProfile = settings.runtimeProfile
         ddRuntimeProfile.setText(selectedProfile.label, false)
         swIpv6.isChecked = settings.ipv6Route
         swRebind.isChecked = settings.networkRebind
         swBindUnderlying.isChecked = settings.bindUnderlyingNetwork
+        swNotifTraffic.isChecked = settings.notificationTraffic
         swShizukuAuto.isChecked = settings.shizukuAutoCaptivePortal
         swSniffing.isChecked = settings.sniffingEnabled
         swSniffingMetadata.visibility = if (settings.sniffingEnabled) View.VISIBLE else View.GONE
@@ -205,7 +229,7 @@ class SettingsActivity : AppCompatActivity() {
         selectedQueryStrategy = settings.dnsQueryStrategy
         ddQueryStrategy.setText(selectedQueryStrategy, false)
         selectedSplitMode = settings.splitTunnelMode
-        ddSplitMode.setText(selectedSplitMode.label, false)
+        ddSplitMode.setText(getString(selectedSplitMode.labelRes), false)
         selectedApps.clear()
         selectedApps.addAll(settings.splitTunnelApps)
         updateSplitUi()
@@ -216,17 +240,17 @@ class SettingsActivity : AppCompatActivity() {
         btnPickApps.visibility = if (showPicker) View.VISIBLE else View.GONE
         val count = selectedApps.size
         tvSplitSummary.text = when (selectedSplitMode) {
-            SplitTunnelMode.ALL -> "Semua aplikasi menggunakan koneksi VPN."
+            SplitTunnelMode.ALL -> getString(R.string.split_summary_all)
             SplitTunnelMode.BYPASS -> if (count == 0) {
-                "Belum ada aplikasi dikecualikan."
+                getString(R.string.split_summary_bypass_empty)
             } else {
-                "$count aplikasi dikecualikan dari VPN."
+                getString(R.string.split_summary_bypass_count, count)
             }
 
             SplitTunnelMode.ONLY_SELECTED -> if (count == 0) {
-                "Belum ada aplikasi dipilih."
+                getString(R.string.split_summary_only_empty)
             } else {
-                "Hanya $count aplikasi yang menggunakan VPN."
+                getString(R.string.split_summary_only_count, count)
             }
         }
     }
@@ -248,7 +272,7 @@ class SettingsActivity : AppCompatActivity() {
             )
 
         if (resolved.isEmpty()) {
-            Toast.makeText(this, "Tidak ada aplikasi yang dapat dipilih.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_no_apps), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -256,16 +280,16 @@ class SettingsActivity : AppCompatActivity() {
         val checked = BooleanArray(resolved.size) { idx -> resolved[idx].first in selectedApps }
 
         AlertDialog.Builder(this)
-            .setTitle("Pilih Aplikasi")
+            .setTitle(R.string.btn_pick_apps)
             .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
                 checked[which] = isChecked
             }
-            .setNegativeButton("Batal", null)
-            .setNeutralButton("Kosongkan") { _, _ ->
+            .setNegativeButton(R.string.cancel, null)
+            .setNeutralButton(R.string.clear) { _, _ ->
                 selectedApps.clear()
                 updateSplitUi()
             }
-            .setPositiveButton("Terapkan") { _, _ ->
+            .setPositiveButton(R.string.apply) { _, _ ->
                 selectedApps.clear()
                 for (index in resolved.indices) {
                     if (checked[index]) selectedApps.add(resolved[index].first)
@@ -280,7 +304,7 @@ class SettingsActivity : AppCompatActivity() {
         if (mtu == null || mtu !in XrayTunInterface.MIN_MTU..XrayTunInterface.MAX_MTU) {
             Toast.makeText(
                 this,
-                "MTU harus antara ${XrayTunInterface.MIN_MTU} hingga ${XrayTunInterface.MAX_MTU}.",
+                getString(R.string.toast_mtu_range, XrayTunInterface.MIN_MTU, XrayTunInterface.MAX_MTU),
                 Toast.LENGTH_SHORT,
             ).show()
             return
@@ -289,16 +313,18 @@ class SettingsActivity : AppCompatActivity() {
         val dnsRaw = etDnsServers.text?.toString()?.trim().orEmpty()
         val fakeIp = swFakeIp.isChecked
         if (!fakeIp && dnsRaw.isBlank()) {
-            Toast.makeText(this, "Isi minimal satu server DNS saat FakeIP mati.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_dns_required), Toast.LENGTH_SHORT).show()
             return
         }
 
         val updated = AppSettings(
+            language = selectedLanguage,
             tunMtu = mtu,
             runtimeProfile = selectedProfile,
             ipv6Route = swIpv6.isChecked,
             networkRebind = swRebind.isChecked,
             bindUnderlyingNetwork = swBindUnderlying.isChecked,
+            notificationTraffic = swNotifTraffic.isChecked,
             shizukuAutoCaptivePortal = swShizukuAuto.isChecked,
             sniffingEnabled = swSniffing.isChecked,
             sniffingMetadataOnly = swSniffing.isChecked && swSniffingMetadata.isChecked,
@@ -309,12 +335,13 @@ class SettingsActivity : AppCompatActivity() {
             splitTunnelApps = selectedApps.toSet(),
         )
         store.save(updated)
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(selectedLanguage.tag))
 
         val active = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
         val note = if (active) {
-            "Pengaturan disimpan. Sambungkan ulang VPN agar perubahan berlaku."
+            getString(R.string.toast_settings_saved_reconnect)
         } else {
-            "Pengaturan disimpan."
+            getString(R.string.toast_settings_saved)
         }
         Toast.makeText(this, note, Toast.LENGTH_SHORT).show()
         finish()
@@ -323,9 +350,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshShizukuUi() {
         val status = ShizukuCaptivePortal.status()
         tvShizukuStatus.text = when (status) {
-            ShizukuCaptivePortal.Status.READY -> "Shizuku siap digunakan"
-            ShizukuCaptivePortal.Status.NO_PERMISSION -> "Shizuku aktif, menunggu izin"
-            ShizukuCaptivePortal.Status.NOT_RUNNING -> "Layanan Shizuku tidak aktif"
+            ShizukuCaptivePortal.Status.READY -> getString(R.string.shizuku_ready)
+            ShizukuCaptivePortal.Status.NO_PERMISSION -> getString(R.string.shizuku_no_perm)
+            ShizukuCaptivePortal.Status.NOT_RUNNING -> getString(R.string.shizuku_not_running)
         }
         tvCaptiveState.text = ShizukuCaptivePortal.humanStateSummary(this)
         btnShizukuPerm.visibility = if (status == ShizukuCaptivePortal.Status.NO_PERMISSION) {
@@ -341,17 +368,17 @@ class SettingsActivity : AppCompatActivity() {
     private fun requestShizukuPermission() {
         when (ShizukuCaptivePortal.status()) {
             ShizukuCaptivePortal.Status.NOT_RUNNING -> {
-                Toast.makeText(this, "Jalankan Shizuku terlebih dahulu.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_shizuku_start_first), Toast.LENGTH_SHORT).show()
             }
 
             ShizukuCaptivePortal.Status.READY -> {
-                Toast.makeText(this, "Izin Shizuku sudah aktif.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_shizuku_already), Toast.LENGTH_SHORT).show()
             }
 
             ShizukuCaptivePortal.Status.NO_PERMISSION -> {
                 runCatching { Shizuku.requestPermission(REQ_SHIZUKU) }
                     .onFailure {
-                        Toast.makeText(this, "Gagal meminta izin Shizuku.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, getString(R.string.toast_shizuku_req_failed), Toast.LENGTH_SHORT).show()
                     }
             }
         }
@@ -361,9 +388,9 @@ class SettingsActivity : AppCompatActivity() {
         ShizukuCaptivePortal.setManualAsync(value) { ok ->
             runOnUiThread {
                 val msg = if (ok) {
-                    if (value == 0) "Captive portal dinonaktifkan." else "Captive portal dipulihkan."
+                    if (value == 0) getString(R.string.toast_captive_off) else getString(R.string.toast_captive_on)
                 } else {
-                    "Gagal menjalankan perintah lewat Shizuku."
+                    getString(R.string.toast_shizuku_cmd_failed)
                 }
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 refreshShizukuUi()

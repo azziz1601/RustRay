@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -20,6 +21,11 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var store: ProfileStore
     private var editingId: String? = null
     private var importedConfig: String? = null
+    private var rrBlobBase64: String = ""
+    private var rrLockServer: Boolean = false
+    private var rrLockPayload: Boolean = false
+    private var rrExpiryEpochMs: Long = 0L
+    private var rrNotesHtml: String = ""
 
     private lateinit var toolbar: MaterialToolbar
     private lateinit var scroll: ScrollView
@@ -52,6 +58,8 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var etSshUdpgwPort: TextInputEditText
     private lateinit var tilSshPoolSize: TextInputLayout
     private lateinit var etSshPoolSize: TextInputEditText
+    private lateinit var swSshEnhanced: MaterialSwitch
+    private lateinit var tvSshEnhancedDesc: TextView
     private lateinit var tilNetwork: TextInputLayout
     private lateinit var ddNetwork: MaterialAutoCompleteTextView
     private lateinit var tilPath: TextInputLayout
@@ -90,6 +98,11 @@ class EditProfileActivity : AppCompatActivity() {
         editingId = intent.getStringExtra(EXTRA_PROFILE_ID)
         val existing = editingId?.let { store.find(it) }
         importedConfig = existing?.importedConfig
+        rrBlobBase64 = existing?.rrBlobBase64.orEmpty()
+        rrLockServer = existing?.rrLockServer == true
+        rrLockPayload = existing?.rrLockPayload == true
+        rrExpiryEpochMs = existing?.rrExpiryEpochMs ?: 0L
+        rrNotesHtml = existing?.rrNotesHtml.orEmpty()
 
         toolbar.setNavigationOnClickListener { finish() }
         toolbar.setOnMenuItemClickListener { item ->
@@ -110,13 +123,14 @@ class EditProfileActivity : AppCompatActivity() {
         setupDropdown(ddFingerprint, fingerprintOptions) { updateVisibility() }
 
         if (existing != null) {
-            toolbar.title = "Edit profile"
+            toolbar.title = getString(R.string.title_edit_profile)
             populate(ConfigBuilder.hydrateFromImportedConfig(existing))
         } else {
-            toolbar.title = "New profile"
+            toolbar.title = getString(R.string.title_new_profile)
             populateDefaults()
         }
         updateVisibility()
+        applyRrLocks()
     }
 
     private fun bindViews() {
@@ -151,6 +165,8 @@ class EditProfileActivity : AppCompatActivity() {
         etSshUdpgwPort = findViewById(R.id.etSshUdpgwPort)
         tilSshPoolSize = findViewById(R.id.tilSshPoolSize)
         etSshPoolSize = findViewById(R.id.etSshPoolSize)
+        swSshEnhanced = findViewById(R.id.swSshEnhanced)
+        tvSshEnhancedDesc = findViewById(R.id.tvSshEnhancedDesc)
         tilNetwork = findViewById(R.id.tilNetwork)
         ddNetwork = findViewById(R.id.ddNetwork)
         tilPath = findViewById(R.id.tilPath)
@@ -212,6 +228,7 @@ class EditProfileActivity : AppCompatActivity() {
         etSpiderX.setText("/")
         etSshUdpgwPort.setText("7300")
         etSshPoolSize.setText("1")
+        swSshEnhanced.isChecked = false
     }
 
     private fun populate(profile: Profile) {
@@ -242,6 +259,7 @@ class EditProfileActivity : AppCompatActivity() {
         etSshPayload.setText(profile.sshPayload)
         etSshUdpgwPort.setText(profile.sshUdpgwPort.toString())
         etSshPoolSize.setText(profile.sshPoolSize.toString())
+        swSshEnhanced.isChecked = profile.sshEnhanced
         ddNetwork.setText(profile.network.label, false)
         etPath.setText(profile.path.ifBlank { "/" })
         etHost.setText(profile.host)
@@ -253,6 +271,47 @@ class EditProfileActivity : AppCompatActivity() {
         etPublicKey.setText(profile.publicKey)
         etShortId.setText(profile.shortId)
         etSpiderX.setText(profile.spiderX.ifBlank { "/" })
+    }
+
+
+    private fun applyRrLocks() {
+        val masked = "••••••••"
+        if (rrLockServer) {
+            ddProtocol.isEnabled = false
+            etServer.setText(masked)
+            etServer.isEnabled = false
+            etPort.setText("•••")
+            etPort.isEnabled = false
+            etSshUsername.setText(masked)
+            etSshUsername.isEnabled = false
+            etUuid.setText(masked)
+            etUuid.isEnabled = false
+            etPassword.setText(masked)
+            etPassword.isEnabled = false
+        }
+        if (rrLockPayload) {
+            ddSshTransport.isEnabled = false
+            etSshProxy.setText(masked)
+            etSshProxy.isEnabled = false
+            etSshPayload.setText(masked)
+            etSshPayload.isEnabled = false
+            ddNetwork.isEnabled = false
+            etPath.setText(masked)
+            etPath.isEnabled = false
+            etHost.setText(masked)
+            etHost.isEnabled = false
+            etServiceName.setText(masked)
+            etServiceName.isEnabled = false
+            ddSecurity.isEnabled = false
+            etSni.setText(masked)
+            etSni.isEnabled = false
+            etPublicKey.setText(masked)
+            etPublicKey.isEnabled = false
+            etShortId.setText(masked)
+            etShortId.isEnabled = false
+            etSpiderX.setText(masked)
+            etSpiderX.isEnabled = false
+        }
     }
 
     private fun selectedProtocol(): Protocol =
@@ -286,7 +345,7 @@ class EditProfileActivity : AppCompatActivity() {
             val network = selectedNetwork()
             if (security == Security.REALITY && (network == Network.WS || network == Network.HTTPUPGRADE)) {
                 ddSecurity.setText(Security.TLS.label, false)
-                toast("REALITY is not supported over ${network.label}; switched to TLS")
+                toast(getString(R.string.toast_reality_switched, network.label))
             }
         }
         updateVisibility()
@@ -321,6 +380,8 @@ class EditProfileActivity : AppCompatActivity() {
             tilSshPayload.visibility = if (needsPayload) View.VISIBLE else View.GONE
             tilSshUdpgwPort.visibility = View.VISIBLE
             tilSshPoolSize.visibility = View.VISIBLE
+            swSshEnhanced.visibility = View.VISIBLE
+            tvSshEnhancedDesc.visibility = View.VISIBLE
 
             tilNetwork.visibility = View.GONE
             tilPath.visibility = if (needsWs) View.VISIBLE else View.GONE
@@ -349,6 +410,8 @@ class EditProfileActivity : AppCompatActivity() {
         tilSshPayload.visibility = View.GONE
         tilSshUdpgwPort.visibility = View.GONE
         tilSshPoolSize.visibility = View.GONE
+        swSshEnhanced.visibility = View.GONE
+        tvSshEnhancedDesc.visibility = View.GONE
 
         tilUuid.visibility = if (protocol == Protocol.TROJAN) View.GONE else View.VISIBLE
         tilPassword.visibility = if (protocol == Protocol.TROJAN) View.VISIBLE else View.GONE
@@ -402,70 +465,72 @@ class EditProfileActivity : AppCompatActivity() {
         val poolSize = etSshPoolSize.text?.toString()?.trim()?.toIntOrNull() ?: 2
 
         var valid = true
-        if (server.isBlank()) {
-            showError(tilServer, "Server is required")
-            valid = false
-        }
-        if (port == null || port !in 1..65535) {
-            showError(tilPort, "Port must be 1–65535")
-            valid = false
+        if (!rrLockServer) {
+            if (server.isBlank()) {
+                showError(tilServer, getString(R.string.err_server_required))
+                valid = false
+            }
+            if (port == null || port !in 1..65535) {
+                showError(tilPort, getString(R.string.err_port_range))
+                valid = false
+            }
         }
         val sshProxy = etSshProxy.text?.toString()?.trim().orEmpty()
         if (protocol == Protocol.SSH) {
-            if (sshTransport == SshTransport.PROXY && sshProxy.isBlank()) {
-                showError(tilSshProxy, "Remote proxy wajib diisi")
+            if (!rrLockPayload && sshTransport == SshTransport.PROXY && sshProxy.isBlank()) {
+                showError(tilSshProxy, getString(R.string.err_proxy_required))
                 valid = false
             }
-            if (sshUsername.isBlank()) {
-                showError(tilSshUsername, "Username is required")
+            if (!rrLockServer && sshUsername.isBlank()) {
+                showError(tilSshUsername, getString(R.string.err_username_required))
                 valid = false
             }
-            if (credential.isBlank()) {
-                showError(tilPassword, "Password is required")
+            if (!rrLockServer && credential.isBlank()) {
+                showError(tilPassword, getString(R.string.err_password_required))
                 valid = false
             }
             if (udpgwPort !in 1..65535) {
-                showError(tilSshUdpgwPort, "Port UDPGW must be 1–65535")
+                showError(tilSshUdpgwPort, getString(R.string.err_udpgw_range))
                 valid = false
             }
             if (poolSize !in 1..4) {
-                showError(tilSshPoolSize, "Parallel connections must be 1–4")
+                showError(tilSshPoolSize, getString(R.string.err_pool_range))
                 valid = false
             }
         } else {
             if (protocol == Protocol.VMESS && (alterId == null || alterId !in 0..65535)) {
-                showError(tilAlterId, "Alter ID must be 0–65535")
+                showError(tilAlterId, getString(R.string.err_alter_id_range))
                 valid = false
             }
-            if (credential.isBlank()) {
-                if (protocol == Protocol.TROJAN) showError(tilPassword, "Password is required")
-                else showError(tilUuid, "UUID is required")
+            if (!rrLockServer && credential.isBlank()) {
+                if (protocol == Protocol.TROJAN) showError(tilPassword, getString(R.string.err_password_required))
+                else showError(tilUuid, getString(R.string.err_uuid_required))
                 valid = false
             }
             if (flow.isNotEmpty() && (network != Network.TCP || security == Security.NONE)) {
-                showError(tilFlow, "Vision requires TCP with TLS or REALITY")
+                showError(tilFlow, getString(R.string.err_vision_req))
                 valid = false
             }
             if (security == Security.REALITY) {
                 if (selectedNetwork() == Network.WS || selectedNetwork() == Network.HTTPUPGRADE) {
-                    showError(tilSecurity, "REALITY cannot be used over ${network.label}")
+                    showError(tilSecurity, getString(R.string.err_reality_net, network.label))
                     valid = false
                 }
-                if (etPublicKey.text?.toString()?.trim().isNullOrEmpty()) {
-                    showError(tilPublicKey, "REALITY public key is required")
+                if (!rrLockPayload && etPublicKey.text?.toString()?.trim().isNullOrEmpty()) {
+                    showError(tilPublicKey, getString(R.string.err_reality_pubkey))
                     valid = false
                 }
             }
         }
-        if (!valid || port == null) return
+        if (!valid || (!rrLockServer && port == null)) return
 
         val profile = Profile(
             id = editingId ?: UUID.randomUUID().toString(),
-            name = name.ifBlank { server },
+            name = name.ifBlank { if (rrLockServer) "RustRay Config" else server },
             protocol = protocol,
-            server = server,
-            port = port,
-            credential = credential,
+            server = if (rrLockServer) "" else server,
+            port = if (rrLockServer) 0 else (port ?: 443),
+            credential = if (rrLockServer) "" else credential,
             flow = flow,
             vmessSecurity = ddVmessSecurity.text.toString().ifBlank { "auto" },
             alterId = alterId ?: 0,
@@ -480,14 +545,20 @@ class EditProfileActivity : AppCompatActivity() {
             path = etPath.text?.toString()?.trim().orEmpty().ifBlank { "/" },
             host = etHost.text?.toString()?.trim().orEmpty(),
             serviceName = etServiceName.text?.toString()?.trim().orEmpty(),
-            sshUsername = sshUsername,
+            sshUsername = if (rrLockServer) "" else sshUsername,
             sshTransport = sshTransport,
-            sshPayload = etSshPayload.text?.toString().orEmpty(),
-            sshProxy = sshProxy,
+            sshPayload = if (rrLockPayload) "" else etSshPayload.text?.toString().orEmpty(),
+            sshProxy = if (rrLockPayload) "" else sshProxy,
             sshUdpgwPort = udpgwPort,
             sshPoolSize = poolSize,
+            sshEnhanced = swSshEnhanced.isChecked,
             importedConfig = null,
             plaintext = protocol == Protocol.VLESS && security == Security.NONE,
+            rrBlobBase64 = rrBlobBase64,
+            rrLockServer = rrLockServer,
+            rrLockPayload = rrLockPayload,
+            rrExpiryEpochMs = rrExpiryEpochMs,
+            rrNotesHtml = rrNotesHtml,
         )
         store.upsert(profile)
         if (store.selectedId() == null) store.select(profile.id)

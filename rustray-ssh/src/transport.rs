@@ -95,7 +95,7 @@ pub async fn open_transport(
         (_, None) => (cfg.host.as_str(), cfg.port),
     };
 
-    let tcp = connect_protected_tcp(dial_host, dial_port, protector).await?;
+    let tcp = connect_protected_tcp(dial_host, dial_port, cfg.enhanced, protector).await?;
 
     match mode.as_str() {
         "direct" | "" => Ok(Box::new(tcp)),
@@ -135,6 +135,7 @@ pub async fn open_transport(
 async fn connect_protected_tcp(
     host: &str,
     port: u16,
+    enhanced: bool,
     protector: &SocketProtector,
 ) -> io::Result<TcpStream> {
     let mut addrs = lookup_host((host, port)).await?;
@@ -150,6 +151,10 @@ async fn connect_protected_tcp(
     let sock = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_nodelay(true)?;
     sock.set_keepalive(true)?;
+    if enhanced {
+        let _ = sock.set_recv_buffer_size(256 * 1024);
+        let _ = sock.set_send_buffer_size(256 * 1024);
+    }
     sock.set_nonblocking(true)?;
 
     if !protector(sock.as_raw_fd()) {

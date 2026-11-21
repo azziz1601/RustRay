@@ -44,6 +44,8 @@ object RustSshBridge {
             .put("udpgwPort", profile.sshUdpgwPort)
             .put("poolSize", profile.sshPoolSize)
             .put("udpMtu", settings.tunMtu)
+            .put("enhanced", profile.sshEnhanced)
+            .put("rrBlobBase64", profile.rrBlobBase64)
             .toString()
 
         val port = nativeStart(payload, vpnService)
@@ -66,6 +68,16 @@ object RustSshBridge {
         return runCatching { nativeGetStats() }.getOrDefault("")
     }
 
+    fun encryptRr(plainJson: String): ByteArray {
+        ensureLoaded()
+        return nativeEncryptRr(plainJson)
+    }
+
+    fun decryptRr(blob: ByteArray): String {
+        ensureLoaded()
+        return nativeDecryptRr(blob)
+    }
+
     @JvmStatic
     private external fun nativeStart(configJson: String, vpnService: AppVpnService): Int
 
@@ -77,4 +89,10 @@ object RustSshBridge {
 
     @JvmStatic
     private external fun nativeGetStats(): String
+
+    @JvmStatic
+    private external fun nativeEncryptRr(plainJson: String): ByteArray
+
+    @JvmStatic
+    private external fun nativeDecryptRr(blob: ByteArray): String
 }

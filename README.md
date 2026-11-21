@@ -18,7 +18,7 @@ Supported link formats:
 - `trojan://`
 
 Supported transports: **TCP, WebSocket, HTTPUpgrade, gRPC, and XHTTP**.
-Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and SSL+WebSocket modes with pooled connections, per-destination UDPGW channels, lock-free native I/O on `russh` 0.65, remote DNS, a one-packet UDPGW probe, live engine telemetry, and optional HTTP upstream proxy.
+Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and SSL+WebSocket modes with pooled connections, per-destination UDPGW channels, lock-free native I/O on `russh` 0.65, remote DNS, a one-packet UDPGW probe, live engine telemetry, optional HTTP upstream proxy, and an enhanced tuning mode. Profiles use card-style rows with quick Edit/Share/Delete actions and can be exported/imported as encrypted `.rr` files. The UI is available in English and Indonesian, with a home-screen widget and Quick Settings tiles.
 
 > RustRay uses **xray-rust**, an independent, client-only Rust reimplementation.
 > It is not the official XTLS Go [Xray-core](https://github.com/XTLS/Xray-core)
@@ -51,6 +51,9 @@ Manual SSH profiles add direct, payload, proxy, SSL, SSL+payload, WebSocket, and
   `host:port@user:pass`), automatic primary-session fallback, and live engine
   counters including `txB`/`rxB`, UDPGW probe result, and `last_dst` in the
   Logs dialog.
+- Export profiles as AES-256-GCM `.rr` files and reopen them via the Android Share Sheet or by opening a `.rr` file. Export can lock server/account fields, lock payload/proxy/SNI, set an expiry date, and attach HTML notes with clickable links.
+- The profile list uses card rows with a protocol badge, endpoint, `Locked`/`Expired` state, and quick Edit, Share, and Delete buttons. English and Indonesian strings are included, together with a widget and two Quick Settings tiles.
+- Optional enhanced SSH mode raises the SSH window to 8 MiB, shortens keepalive to 8s, grows TCP buffers to 256 KiB, and uses a 5s UDPGW keepalive.
 
 ## Download the APK
 
@@ -65,7 +68,7 @@ Every push to `main` builds release APKs with GitHub Actions.
 
 You can also trigger a build manually with **Run workflow** on the Actions page.
 
-The package name is `io.rustray.app`, version 1.2.6 (`versionCode` 9),
+The package name is `io.rustray.app`, version 1.2.6 (`versionCode` 10),
 `minSdk` 24, and `targetSdk` 35.
 
 ## Build it yourself
@@ -123,6 +126,7 @@ it can produce APKs that devices treat as official updates.
   `badvpn-udpgw` servers without `--dns-server` remain compatible.
 - A one-packet DNS probe on UDPGW conid 65530 checks whether the server replies;
   the Logs dialog reports `probe=ok` or `probe=no-reply` plus `last_dst`.
+- Official `.rr` files are encrypted with a key injected at build time from the GitHub Actions secret `RR_MASTER_SECRET`. Public clones without that secret use a development fallback and cannot open official `.rr` files; see `RR_SECRET_SETUP.md`.
 - VLESS without TLS is unencrypted. The core rejects such outbound connections
   to public hosts, so RustRay uses a single-label DNS alias and a `dns.hosts`
   entry to keep those links working. Only use this with providers that

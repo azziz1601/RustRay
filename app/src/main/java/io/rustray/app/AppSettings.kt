@@ -1,8 +1,19 @@
 package io.rustray.app
 
 import android.content.Context
+import androidx.annotation.StringRes
 import org.xrayrust.mobile.XrayTunInterface
 import org.xrayrust.mobile.XrayTunRuntimeProfile
+
+enum class AppLanguage(val tag: String, val label: String) {
+    EN("en", "English"),
+    ID("id", "Bahasa Indonesia");
+
+    companion object {
+        fun fromTag(value: String?): AppLanguage =
+            entries.firstOrNull { it.tag.equals(value, ignoreCase = true) } ?: EN
+    }
+}
 
 enum class TunProfileOption(val wire: String, val label: String) {
     MOBILE_PLUS("mobile_plus", "MobilePlus"),
@@ -27,10 +38,10 @@ enum class TunProfileOption(val wire: String, val label: String) {
     }
 }
 
-enum class SplitTunnelMode(val wire: String, val label: String) {
-    ALL("all", "Semua aplikasi"),
-    BYPASS("bypass", "Kecualikan aplikasi terpilih"),
-    ONLY_SELECTED("only_selected", "Hanya aplikasi terpilih");
+enum class SplitTunnelMode(val wire: String, @StringRes val labelRes: Int) {
+    ALL("all", R.string.split_all),
+    BYPASS("bypass", R.string.split_bypass),
+    ONLY_SELECTED("only_selected", R.string.split_only);
 
     companion object {
         fun fromWire(value: String?): SplitTunnelMode =
@@ -39,11 +50,13 @@ enum class SplitTunnelMode(val wire: String, val label: String) {
 }
 
 data class AppSettings(
+    val language: AppLanguage = AppLanguage.EN,
     val tunMtu: Int = XrayTunInterface.MTU,
     val runtimeProfile: TunProfileOption = TunProfileOption.MOBILE_PLUS,
     val ipv6Route: Boolean = false,
     val networkRebind: Boolean = true,
     val bindUnderlyingNetwork: Boolean = true,
+    val notificationTraffic: Boolean = true,
     val shizukuAutoCaptivePortal: Boolean = false,
     val sniffingEnabled: Boolean = true,
     val sniffingMetadataOnly: Boolean = false,
@@ -68,13 +81,19 @@ data class AppSettings(
         const val GAMING_MTU = 1380
         val QUERY_STRATEGIES = listOf("UseIPv4", "UseIP", "UseIPv6")
 
-        fun gamingPreset(existingApps: Set<String>, existingMode: SplitTunnelMode): AppSettings =
+        fun gamingPreset(
+            existingApps: Set<String>,
+            existingMode: SplitTunnelMode,
+            language: AppLanguage = AppLanguage.EN,
+        ): AppSettings =
             AppSettings(
+                language = language,
                 tunMtu = GAMING_MTU,
                 runtimeProfile = TunProfileOption.THROUGHPUT,
                 ipv6Route = false,
                 networkRebind = true,
                 bindUnderlyingNetwork = true,
+                notificationTraffic = true,
                 shizukuAutoCaptivePortal = false,
                 sniffingEnabled = false,
                 sniffingMetadataOnly = false,
@@ -91,12 +110,14 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("rustray.settings", Context.MODE_PRIVATE)
 
     fun load(): AppSettings = AppSettings(
+        language = AppLanguage.fromTag(prefs.getString(KEY_LANGUAGE, null)),
         tunMtu = prefs.getInt(KEY_MTU, XrayTunInterface.MTU)
             .coerceIn(XrayTunInterface.MIN_MTU, XrayTunInterface.MAX_MTU),
         runtimeProfile = TunProfileOption.fromWire(prefs.getString(KEY_RUNTIME_PROFILE, null)),
         ipv6Route = prefs.getBoolean(KEY_IPV6_ROUTE, false),
         networkRebind = prefs.getBoolean(KEY_NETWORK_REBIND, true),
         bindUnderlyingNetwork = prefs.getBoolean(KEY_BIND_UNDERLYING, true),
+        notificationTraffic = prefs.getBoolean(KEY_NOTIF_TRAFFIC, true),
         shizukuAutoCaptivePortal = prefs.getBoolean(KEY_SHIZUKU_AUTO_CAPTIVE, false),
         sniffingEnabled = prefs.getBoolean(KEY_SNIFFING_ENABLED, true),
         sniffingMetadataOnly = prefs.getBoolean(KEY_SNIFFING_METADATA_ONLY, false),
@@ -112,6 +133,7 @@ class SettingsStore(context: Context) {
 
     fun save(settings: AppSettings) {
         prefs.edit()
+            .putString(KEY_LANGUAGE, settings.language.tag)
             .putInt(
                 KEY_MTU,
                 settings.tunMtu.coerceIn(XrayTunInterface.MIN_MTU, XrayTunInterface.MAX_MTU),
@@ -120,6 +142,7 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_IPV6_ROUTE, settings.ipv6Route)
             .putBoolean(KEY_NETWORK_REBIND, settings.networkRebind)
             .putBoolean(KEY_BIND_UNDERLYING, settings.bindUnderlyingNetwork)
+            .putBoolean(KEY_NOTIF_TRAFFIC, settings.notificationTraffic)
             .putBoolean(KEY_SHIZUKU_AUTO_CAPTIVE, settings.shizukuAutoCaptivePortal)
             .putBoolean(KEY_SNIFFING_ENABLED, settings.sniffingEnabled)
             .putBoolean(KEY_SNIFFING_METADATA_ONLY, settings.sniffingMetadataOnly)
@@ -132,11 +155,13 @@ class SettingsStore(context: Context) {
     }
 
     companion object {
+        private const val KEY_LANGUAGE = "app_language"
         private const val KEY_MTU = "tun_mtu"
         private const val KEY_RUNTIME_PROFILE = "runtime_profile"
         private const val KEY_IPV6_ROUTE = "ipv6_route"
         private const val KEY_NETWORK_REBIND = "network_rebind"
         private const val KEY_BIND_UNDERLYING = "bind_underlying_network"
+        private const val KEY_NOTIF_TRAFFIC = "notification_traffic"
         private const val KEY_SHIZUKU_AUTO_CAPTIVE = "shizuku_auto_captive"
         private const val KEY_SNIFFING_ENABLED = "sniffing_enabled"
         private const val KEY_SNIFFING_METADATA_ONLY = "sniffing_metadata_only"

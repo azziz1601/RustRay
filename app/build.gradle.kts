@@ -21,9 +21,9 @@ android {
         applicationId = "io.rustray.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
+        versionCode = 10
         versionName = "1.2.6"
-        resourceConfigurations += listOf("en")
+        resourceConfigurations += listOf("en", "in", "id")
     }
 
     splits {

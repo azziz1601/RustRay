@@ -20,6 +20,7 @@ jni = "0.21"
 log = "0.4"
 android_logger = "0.14"
 base64 = "0.22"
+ring = "0.17"
 
 [profile.release]
 opt-level = "z"

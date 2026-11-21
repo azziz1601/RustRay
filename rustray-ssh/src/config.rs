@@ -26,6 +26,10 @@ pub struct SshBridgeConfig {
     pub pool_size: usize,
     #[serde(default = "default_udp_mtu")]
     pub udp_mtu: usize,
+    #[serde(default)]
+    pub enhanced: bool,
+    #[serde(default)]
+    pub rr_blob_base64: String,
 }
 
 fn default_mode() -> String {
@@ -57,7 +61,8 @@ pub struct ParsedProxy {
 
 impl SshBridgeConfig {
     pub fn effective_pool_size(&self) -> usize {
-        self.pool_size.clamp(1, 4)
+        let base = self.pool_size.clamp(1, 4);
+        if self.enhanced && base < 2 { 2 } else { base }
     }
 
     pub fn effective_sni(&self) -> String {

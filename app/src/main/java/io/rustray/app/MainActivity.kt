@@ -17,9 +17,23 @@ import android.view.View
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.app.DatePickerDialog
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.text.method.LinkMovementMethod
+import android.widget.CheckBox
+import androidx.core.content.FileProvider
+import androidx.core.text.HtmlCompat
+import com.google.android.material.textfield.TextInputEditText
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -88,6 +102,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val openRrLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) importRrFromUri(uri)
+    }
+
     private val notificationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
@@ -95,6 +115,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val savedLang = SettingsStore(this).load().language.tag
+        if (AppCompatDelegate.getApplicationLocales().isEmpty) {
+            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(savedLang))
+        }
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         store = ProfileStore(this)
@@ -105,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         adapter = ProfileAdapter(
             onSelect = { profile -> selectProfile(profile) },
             onEdit = { profile -> openEditor(profile) },
+            onShare = { profile -> showExportRrDialog(profile) },
             onDelete = { profile -> confirmDelete(profile) },
         )
         recycler.layoutManager = LinearLayoutManager(this)
@@ -113,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_import -> {
-                    importFromClipboard()
+                    showImportChooser()
                     true
                 }
 
@@ -133,7 +158,7 @@ class MainActivity : AppCompatActivity() {
 
         fabAdd.setOnClickListener { openEditor(null) }
         btnConnect.setOnClickListener { onConnectClicked() }
-        btnImport.setOnClickListener { importFromClipboard() }
+        btnImport.setOnClickListener { showImportChooser() }
     }
 
     private fun bindViews() {
@@ -181,6 +206,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         refreshProfiles()
         refreshUi()
+        maybeHandleAutoConnect(intent)
+        maybeHandleIncomingRr(intent)
         maybeOfferClipboardImport()
     }
 
@@ -206,11 +233,13 @@ class MainActivity : AppCompatActivity() {
         selected = profiles.firstOrNull { it.id == selectedId }
         adapter.submit(profiles, selectedId)
         tvEmpty.visibility = if (profiles.isEmpty()) View.VISIBLE else View.GONE
+        RustRayWidgetProvider.refreshAll(this)
+        TileSync.requestUpdates(this)
     }
 
     private fun selectProfile(profile: Profile) {
         if (VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING) {
-            toast("Disconnect before switching profiles")
+            toast(getString(R.string.toast_disconnect_before_switch))
             refreshProfiles()
             return
         }
@@ -232,14 +261,14 @@ class MainActivity : AppCompatActivity() {
             (VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING) &&
             VpnState.profileId == profile.id
         ) {
-            toast("Disconnect before deleting the active profile")
+            toast(getString(R.string.toast_disconnect_before_delete))
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Delete profile?")
+            .setTitle(R.string.dialog_delete_title)
             .setMessage(profile.name)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Delete") { _, _ ->
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ ->
                 store.delete(profile.id)
                 refreshProfiles()
                 refreshUi()
@@ -258,22 +287,14 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val profile = selected
                 if (profile == null) {
-                    toast("Add or import a profile first")
+                    toast(getString(R.string.toast_add_profile_first))
                     return
                 }
-                if (profile.plaintext) {
-                    AlertDialog.Builder(this)
-                        .setTitle("No TLS — traffic is not encrypted")
-                        .setMessage(
-                            "This profile connects without TLS. Anyone on the network path " +
-                                "can read or modify your traffic.\n\nContinue anyway?",
-                        )
-                        .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Continue") { _, _ -> beginConnect(profile) }
-                        .show()
-                } else {
-                    beginConnect(profile)
+                if (profile.isExpired()) {
+                    toast(getString(R.string.err_config_expired))
+                    return
                 }
+                beginConnect(profile)
             }
         }
     }
@@ -324,11 +345,11 @@ class MainActivity : AppCompatActivity() {
         )
         statusDot.backgroundTintList = ColorStateList.valueOf(color)
         tvStatus.text = when (phase) {
-            VpnPhase.STOPPED -> "Disconnected"
-            VpnPhase.CONNECTING -> "Connecting…"
-            VpnPhase.CONNECTED -> "Connected"
-            VpnPhase.STOPPING -> "Disconnecting…"
-            VpnPhase.ERROR -> "Connection failed"
+            VpnPhase.STOPPED -> getString(R.string.status_disconnected)
+            VpnPhase.CONNECTING -> getString(R.string.status_connecting)
+            VpnPhase.CONNECTED -> getString(R.string.status_connected)
+            VpnPhase.STOPPING -> getString(R.string.status_disconnecting)
+            VpnPhase.ERROR -> getString(R.string.status_failed)
         }
         tvStatus.setTextColor(color)
 
@@ -337,10 +358,10 @@ class MainActivity : AppCompatActivity() {
             VpnPhase.STOPPED -> selected?.name
             else -> VpnState.profileName.ifBlank { selected?.name }
         }
-        tvProfileName.text = name ?: "No profile selected"
+        tvProfileName.text = name ?: getString(R.string.no_profile_selected)
         tvProfileServer.text = when {
             phase == VpnPhase.STOPPED -> current?.let { "${it.protocol.label} · ${it.endpoint()}" }
-                ?: "Add a profile or import a share link"
+                ?: getString(R.string.add_or_import_hint)
 
             VpnState.server.isNotBlank() -> {
                 val label = current?.protocol?.label
@@ -348,7 +369,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             else -> current?.let { "${it.protocol.label} · ${it.endpoint()}" }
-                ?: "Add a profile or import a share link"
+                ?: getString(R.string.add_or_import_hint)
         }
 
         val error = VpnState.error
@@ -368,7 +389,7 @@ class MainActivity : AppCompatActivity() {
         val running = phase == VpnPhase.CONNECTED
         val active = running || phase == VpnPhase.CONNECTING
         btnConnect.text = when {
-            phase == VpnPhase.STOPPING -> "Disconnecting…"
+            phase == VpnPhase.STOPPING -> getString(R.string.status_disconnecting)
             running || phase == VpnPhase.CONNECTING -> getString(R.string.disconnect)
             else -> getString(R.string.connect)
         }
@@ -420,7 +441,7 @@ class MainActivity : AppCompatActivity() {
 
         tvUpTotal.text = formatBytes(up)
         tvDownTotal.text = formatBytes(down)
-        tvConnections.text = "${snapshot?.activeConnections ?: 0} active connections"
+        tvConnections.text = getString(R.string.active_connections_fmt, snapshot?.activeConnections ?: 0)
     }
 
     private fun resetTraffic() {
@@ -431,13 +452,13 @@ class MainActivity : AppCompatActivity() {
         tvDownRate.text = formatRate(0)
         tvUpTotal.text = formatBytes(0)
         tvDownTotal.text = formatBytes(0)
-        tvConnections.text = "0 active connections"
+        tvConnections.text = getString(R.string.active_connections_zero)
     }
 
     private fun importFromClipboard() {
         val link = readClipboardLink()
         if (link == null) {
-            toast("Clipboard does not contain a vless://, vmess:// or trojan:// link")
+            toast(getString(R.string.toast_clipboard_no_link))
             return
         }
         lastClipboardPrompt = link
@@ -452,10 +473,10 @@ class MainActivity : AppCompatActivity() {
         val details = runCatching { previewOf(link) }.getOrNull()
             ?: "${link.substringBefore("://").uppercase()} share link"
         AlertDialog.Builder(this)
-            .setTitle("Import from clipboard?")
-            .setMessage("$details\n\nOnly VMess, VLESS and Trojan links are supported.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Import") { _, _ -> importLink(link) }
+            .setTitle(R.string.dialog_import_title)
+            .setMessage("$details\n\n${getString(R.string.dialog_import_supported)}")
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.import_action) { _, _ -> importLink(link) }
             .show()
     }
 
@@ -498,13 +519,12 @@ class MainActivity : AppCompatActivity() {
             }
             refreshProfiles()
             refreshUi()
-            val note = if (profile.plaintext) " (no TLS)" else ""
-            val activeNote = if (isVpnActive) ", active profile unchanged" else ""
-            toast("Imported ${profile.name}$note$activeNote")
+            val msg = if (isVpnActive) getString(R.string.toast_imported_active, profile.name) else getString(R.string.toast_imported, profile.name)
+            toast(msg)
         } catch (error: Throwable) {
             val detail = error.message?.lineSequence()?.firstOrNull()?.take(200)
                 ?: error.javaClass.simpleName
-            toast("Import failed: $detail")
+            toast(getString(R.string.toast_import_failed, detail))
         }
     }
 
@@ -590,9 +610,9 @@ class MainActivity : AppCompatActivity() {
         }
         val scroll = ScrollView(this).apply { addView(text) }
         AlertDialog.Builder(this)
-            .setTitle("Logs")
+            .setTitle(R.string.logs)
             .setView(scroll)
-            .setPositiveButton("Close", null)
+            .setPositiveButton(R.string.close, null)
             .show()
     }
 
@@ -602,7 +622,189 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         refreshProfiles()
         refreshUi()
+        maybeHandleAutoConnect(intent)
+        maybeHandleIncomingRr(intent)
+    }
+
+    private fun maybeHandleAutoConnect(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_AUTO_CONNECT, false) == true) {
+            intent.removeExtra(EXTRA_AUTO_CONNECT)
+            if (VpnState.phase == VpnPhase.STOPPED || VpnState.phase == VpnPhase.ERROR) {
+                onConnectClicked()
+            }
+        }
+    }
+
+
+    private fun showImportChooser() {
+        val options = arrayOf(
+            getString(R.string.import_from_clipboard),
+            getString(R.string.import_rr_file),
+        )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.import_chooser_title)
+            .setItems(options) { _, which ->
+                if (which == 0) {
+                    importFromClipboard()
+                } else {
+                    openRrLauncher.launch(arrayOf("*/*"))
+                }
+            }
+            .show()
+    }
+
+    private fun maybeHandleIncomingRr(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (intent.action == Intent.ACTION_VIEW) {
+            intent.data = null
+            importRrFromUri(uri)
+        }
+    }
+
+    private fun importRrFromUri(uri: Uri) {
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Cannot read file")
+            val displayName = resolveFileName(uri) ?: "config.rr"
+            val result = RrConfigCodec.importFromBytes(bytes, displayName)
+            store.upsert(result.profile)
+            val isVpnActive = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
+            if (!isVpnActive || store.selectedId() == null) {
+                store.select(result.profile.id)
+            }
+            refreshProfiles()
+            refreshUi()
+            val msg = if (isVpnActive) {
+                getString(R.string.toast_imported_active, result.profile.name)
+            } else {
+                getString(R.string.toast_imported, result.profile.name)
+            }
+            toast(msg)
+            if (result.notesHtml.isNotBlank()) {
+                showHtmlNotesDialog(result.profile.name, result.notesHtml)
+            }
+        } catch (error: Throwable) {
+            val detail = error.message?.lineSequence()?.firstOrNull()?.take(200)
+                ?: error.javaClass.simpleName
+            toast(getString(R.string.toast_import_failed, detail))
+        }
+    }
+
+    private fun resolveFileName(uri: Uri): String? {
+        return runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment
+    }
+
+    private fun showHtmlNotesDialog(title: String, rawNotes: String) {
+        val html = if (rawNotes.contains('<') && rawNotes.contains('>')) {
+            rawNotes
+        } else {
+            rawNotes.replace("\n", "<br>")
+        }
+        val density = resources.displayMetrics.density
+        val padH = (20 * density).toInt()
+        val padV = (12 * density).toInt()
+        val tv = TextView(this).apply {
+            text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
+            movementMethod = LinkMovementMethod.getInstance()
+            setTextColor(ContextCompat.getColor(context, R.color.text))
+            setLinkTextColor(ContextCompat.getColor(context, R.color.accent))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(padH, padV, padH, padV)
+        }
+        val scroll = ScrollView(this).apply { addView(tv) }
+        AlertDialog.Builder(this)
+            .setTitle(title.ifBlank { getString(R.string.notes_dialog_title) })
+            .setView(scroll)
+            .setPositiveButton(R.string.close, null)
+            .show()
+    }
+
+    private fun showExportRrDialog(profile: Profile) {
+        if (profile.isRrLocked) {
+            toast(getString(R.string.export_locked_forbidden))
+            return
+        }
+        val view = layoutInflater.inflate(R.layout.dialog_export_rr, null)
+        val etName = view.findViewById<TextInputEditText>(R.id.etExportName)
+        val cbLockServer = view.findViewById<CheckBox>(R.id.cbLockServer)
+        val cbLockPayload = view.findViewById<CheckBox>(R.id.cbLockPayload)
+        val etExpiry = view.findViewById<TextInputEditText>(R.id.etExportExpiry)
+        val btnClearExpiry = view.findViewById<View>(R.id.btnClearExpiry)
+        val etNotes = view.findViewById<TextInputEditText>(R.id.etExportNotes)
+
+        etName.setText(profile.name)
+        var expiryEpochMs = 0L
+        val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+        etExpiry.setOnClickListener {
+            val cal = Calendar.getInstance()
+            if (expiryEpochMs > 0L) cal.timeInMillis = expiryEpochMs
+            DatePickerDialog(
+                this,
+                { _, year, month, day ->
+                    val chosen = Calendar.getInstance().apply {
+                        set(year, month, day, 23, 59, 59)
+                        set(Calendar.MILLISECOND, 999)
+                    }
+                    expiryEpochMs = chosen.timeInMillis
+                    etExpiry.setText(dateFmt.format(chosen.time))
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH),
+            ).apply {
+                datePicker.minDate = System.currentTimeMillis()
+            }.show()
+        }
+        btnClearExpiry.setOnClickListener {
+            expiryEpochMs = 0L
+            etExpiry.setText("")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.export_rr_title)
+            .setView(view)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.export_action) { _, _ ->
+                try {
+                    val rawName = etName.text?.toString()?.trim().orEmpty().ifBlank { profile.name }
+                    val safeFileName = rawName.replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().ifBlank { "config" }
+                    val finalFileName = if (safeFileName.endsWith(".rr", ignoreCase = true)) safeFileName else "$safeFileName.rr"
+                    val opts = RrExportOptions(
+                        fileName = rawName,
+                        lockServer = cbLockServer.isChecked,
+                        lockPayload = cbLockPayload.isChecked,
+                        expiryEpochMs = expiryEpochMs,
+                        notesHtml = etNotes.text?.toString().orEmpty(),
+                    )
+                    val encrypted = RrConfigCodec.exportToBytes(profile, opts)
+                    val outDir = File(cacheDir, "exports").apply { mkdirs() }
+                    val outFile = File(outDir, finalFileName)
+                    outFile.writeBytes(encrypted)
+                    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", outFile)
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/octet-stream"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(shareIntent, getString(R.string.export_share_chooser)))
+                } catch (error: Throwable) {
+                    val detail = error.message?.lineSequence()?.firstOrNull()?.take(200)
+                        ?: error.javaClass.simpleName
+                    toast(getString(R.string.export_failed, detail))
+                }
+            }
+            .show()
+    }
+
+    companion object {
+        const val EXTRA_AUTO_CONNECT = "auto_connect"
     }
 }

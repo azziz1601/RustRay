@@ -49,6 +49,10 @@ impl SshPool {
         }
     }
 
+    pub fn is_enhanced(&self) -> bool {
+        self.cfg.enhanced
+    }
+
     /// Connects the primary SSH slot eagerly so handshake/auth errors surface immediately on start.
     pub async fn warmup(&self) -> io::Result<()> {
         let _ = self.get_or_connect_slot(&self.tcp_slots[0]).await?;
@@ -169,10 +173,12 @@ impl SshPool {
         ]);
         preferred.compression = Cow::Borrowed(&[compression::NONE]);
 
+        let window_size = if self.cfg.enhanced { 8 * 1024 * 1024 } else { 4 * 1024 * 1024 };
+        let keepalive_secs = if self.cfg.enhanced { 8 } else { 15 };
         let config = Arc::new(client::Config {
-            window_size: 4 * 1024 * 1024,
+            window_size,
             maximum_packet_size: 32 * 1024,
-            keepalive_interval: Some(Duration::from_secs(15)),
+            keepalive_interval: Some(Duration::from_secs(keepalive_secs)),
             keepalive_max: 2,
             nodelay: true,
             preferred,

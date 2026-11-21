@@ -42,9 +42,9 @@ object ShizukuCaptivePortal {
             Settings.Global.getString(resolver, "captive_portal_detection_enabled")
         }.getOrNull()
         return when {
-            mode == "0" && detect == "0" -> "Captive portal: Nonaktif"
-            mode == "1" || detect == "1" -> "Captive portal: Aktif"
-            else -> "Captive portal: Bawaan sistem"
+            mode == "0" && detect == "0" -> context.getString(R.string.captive_disabled)
+            mode == "1" || detect == "1" -> context.getString(R.string.captive_enabled)
+            else -> context.getString(R.string.captive_default)
         }
     }
 

@@ -1,5 +1,6 @@
 mod config;
 mod protocol;
+mod rr_crypto;
 mod socks5;
 mod ssh_pool;
 mod stats;
@@ -7,9 +8,11 @@ mod transport;
 mod udpgw_client;
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
-use jni::sys::{jint, jstring};
+use base64::Engine;
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
+use jni::sys::{jbyteArray, jint, jstring};
 use jni::JNIEnv;
 use tokio::runtime::Runtime;
 use tokio::sync::watch;
@@ -47,6 +50,72 @@ fn throw_runtime(env: &mut JNIEnv, msg: &str) {
     let _ = env.throw_new("java/lang/IllegalStateException", msg);
 }
 
+/// If the SSH config carries an encrypted `.rr` blob, decrypt it directly inside native Rust
+/// memory and overlay locked fields so locked credentials/payloads never touch Kotlin plaintext.
+fn resolve_rr_ssh_fields(mut cfg: SshBridgeConfig) -> Result<SshBridgeConfig, String> {
+    if cfg.rr_blob_base64.trim().is_empty() {
+        return Ok(cfg);
+    }
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(cfg.rr_blob_base64.trim())
+        .map_err(|e| format!("Invalid .rr blob encoding: {e}"))?;
+    let plain = rr_crypto::decrypt_rr(&raw)?;
+    let root: serde_json::Value =
+        serde_json::from_slice(&plain).map_err(|e| format!("Invalid .rr JSON: {e}"))?;
+
+    let expiry = root.get("expiryEpochMs").and_then(|v| v.as_i64()).unwrap_or(0);
+    if expiry > 0 {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        if now_ms > expiry {
+            return Err("Config expired".to_string());
+        }
+    }
+
+    let lock_server = root.get("lockServer").and_then(|v| v.as_bool()).unwrap_or(false);
+    let lock_payload = root.get("lockPayload").and_then(|v| v.as_bool()).unwrap_or(false);
+    if let Some(prof) = root.get("profile") {
+        if lock_server {
+            if let Some(v) = prof.get("server").and_then(|v| v.as_str()) {
+                cfg.host = v.to_string();
+            }
+            if let Some(v) = prof.get("port").and_then(|v| v.as_u64()) {
+                cfg.port = v as u16;
+            }
+            if let Some(v) = prof.get("sshUsername").and_then(|v| v.as_str()) {
+                cfg.username = v.to_string();
+            }
+            if let Some(v) = prof.get("credential").and_then(|v| v.as_str()) {
+                cfg.password = v.to_string();
+            }
+        }
+        if lock_payload {
+            if let Some(v) = prof.get("sshTransport").and_then(|v| v.as_str()) {
+                cfg.transport_mode = v.to_string();
+            }
+            if let Some(v) = prof.get("sshPayload").and_then(|v| v.as_str()) {
+                cfg.payload = v.to_string();
+            }
+            if let Some(v) = prof.get("sshProxy").and_then(|v| v.as_str()) {
+                cfg.proxy = v.to_string();
+            }
+            if let Some(v) = prof.get("sni").and_then(|v| v.as_str()) {
+                cfg.sni = v.to_string();
+            }
+            if let Some(v) = prof.get("host").and_then(|v| v.as_str()) {
+                cfg.ws_host = v.to_string();
+            }
+            if let Some(v) = prof.get("path").and_then(|v| v.as_str()) {
+                cfg.ws_path = v.to_string();
+            }
+        }
+    }
+    cfg.rr_blob_base64.clear();
+    Ok(cfg)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
     mut env: JNIEnv,
@@ -64,10 +133,18 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
         }
     };
 
-    let cfg: SshBridgeConfig = match serde_json::from_str(&json_str) {
+    let raw_cfg: SshBridgeConfig = match serde_json::from_str(&json_str) {
         Ok(c) => c,
         Err(e) => {
             throw_runtime(&mut env, &format!("Invalid SSH config JSON: {e}"));
+            return -1;
+        }
+    };
+
+    let cfg = match resolve_rr_ssh_fields(raw_cfg) {
+        Ok(c) => c,
+        Err(e) => {
+            throw_runtime(&mut env, &e);
             return -1;
         }
     };
@@ -153,6 +230,58 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
             drop(runtime);
             throw_runtime(&mut env, &err.to_string());
             -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeEncryptRr(
+    mut env: JNIEnv,
+    _class: JClass,
+    plain_json: JString,
+) -> jbyteArray {
+    let text: String = match env.get_string(&plain_json) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Invalid JSON string: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    match rr_crypto::encrypt_rr(text.as_bytes()) {
+        Ok(bytes) => env
+            .byte_array_from_slice(&bytes)
+            .map(|arr| arr.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(e) => {
+            throw_runtime(&mut env, &e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeDecryptRr(
+    mut env: JNIEnv,
+    _class: JClass,
+    blob: JByteArray,
+) -> jstring {
+    let bytes = match env.convert_byte_array(blob) {
+        Ok(b) => b,
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Invalid byte array: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    match rr_crypto::decrypt_rr(&bytes)
+        .and_then(|plain| String::from_utf8(plain).map_err(|_| "Invalid UTF-8 in .rr config".to_string()))
+    {
+        Ok(text) => env
+            .new_string(text)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(e) => {
+            throw_runtime(&mut env, &e);
+            std::ptr::null_mut()
         }
     }
 }

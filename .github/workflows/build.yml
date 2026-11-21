@@ -41,6 +41,8 @@ jobs:
 
       - name: Build Native SSH Engine (librustray_ssh.so)
         working-directory: rustray-ssh
+        env:
+          RR_MASTER_SECRET: ${{ secrets.RR_MASTER_SECRET }}
         run: |
           if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -n "${ANDROID_HOME:-}" ] && [ -d "${ANDROID_HOME}/ndk" ]; then
             export ANDROID_NDK_HOME="$(ls -d "${ANDROID_HOME}"/ndk/* | sort -V | tail -n 1)"

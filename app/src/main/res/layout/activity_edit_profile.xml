@@ -46,7 +46,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="Name">
+                android:hint="@string/hint_name">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etName"
@@ -61,7 +61,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Protocol">
+                android:hint="@string/hint_protocol">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/ddProtocol"
@@ -75,7 +75,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Server address">
+                android:hint="@string/hint_server">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etServer"
@@ -90,7 +90,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Port">
+                android:hint="@string/hint_port">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etPort"
@@ -104,7 +104,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="26dp"
-                android:text="CREDENTIALS"
+                android:text="@string/section_credentials"
                 android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
             <com.google.android.material.textfield.TextInputLayout
@@ -112,7 +112,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="Username">
+                android:hint="@string/hint_username">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSshUsername"
@@ -127,7 +127,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="UUID">
+                android:hint="@string/hint_uuid">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etUuid"
@@ -142,7 +142,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Password"
+                android:hint="@string/hint_password"
                 app:endIconMode="password_toggle">
 
                 <com.google.android.material.textfield.TextInputEditText
@@ -159,7 +159,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Flow">
+                android:hint="@string/hint_flow">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/ddFlow"
@@ -202,7 +202,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="26dp"
-                android:text="TRANSPORT"
+                android:text="@string/section_transport"
                 android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
             <com.google.android.material.textfield.TextInputLayout
@@ -211,7 +211,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="Mode SSH">
+                android:hint="@string/hint_ssh_mode">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/ddSshTransport"
@@ -225,8 +225,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Remote Proxy"
-                app:helperText="Format host:port atau host:port@user:pass">
+                android:hint="@string/hint_ssh_proxy"
+                app:helperText="@string/helper_ssh_proxy">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSshProxy"
@@ -241,7 +241,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Payload HTTP">
+                android:hint="@string/hint_ssh_payload">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSshPayload"
@@ -257,7 +257,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Port UDPGW">
+                android:hint="@string/hint_ssh_udpgw_port">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSshUdpgwPort"
@@ -272,7 +272,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Koneksi Paralel">
+                android:hint="@string/hint_ssh_pool_size">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSshPoolSize"
@@ -281,6 +281,23 @@
                     android:inputType="number"
                     android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/swSshEnhanced"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:minHeight="48dp"
+                android:text="@string/ssh_enhanced"
+                android:textColor="@color/text" />
+
+            <TextView
+                android:id="@+id/tvSshEnhancedDesc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/ssh_enhanced_desc"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
 
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilNetwork"
@@ -288,7 +305,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="Network">
+                android:hint="@string/hint_network">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/ddNetwork"
@@ -302,7 +319,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="Path">
+                android:hint="@string/hint_path">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etPath"
@@ -347,7 +364,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="26dp"
-                android:text="SECURITY"
+                android:text="@string/section_security"
                 android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
             <com.google.android.material.textfield.TextInputLayout
@@ -356,7 +373,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="Security">
+                android:hint="@string/hint_vmess_security">
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
                     android:id="@+id/ddSecurity"
@@ -370,7 +387,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="SNI / server name">
+                android:hint="@string/hint_sni">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSni"

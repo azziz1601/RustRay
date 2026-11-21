@@ -12,6 +12,10 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -29,6 +33,24 @@ class AppVpnService : XrayVpnService() {
     @Volatile
     private var activeSettings: AppSettings = AppSettings()
 
+    private val notifHandler = Handler(Looper.getMainLooper())
+    private var notifLastUp = -1L
+    private var notifLastDown = -1L
+    private var notifLastAt = 0L
+    private val trafficTicker = object : Runnable {
+        override fun run() {
+            if (VpnState.phase != VpnPhase.CONNECTED || !activeSettings.notificationTraffic) {
+                return
+            }
+            val pm = getSystemService(PowerManager::class.java)
+            val screenOn = pm?.isInteractive ?: true
+            if (screenOn) {
+                updateTrafficNotification()
+            }
+            notifHandler.postDelayed(this, 2000L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -38,10 +60,23 @@ class AppVpnService : XrayVpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CONNECT -> handleConnect(intent.getStringExtra(EXTRA_PROFILE_ID))
+            ACTION_RECONNECT -> handleReconnect(intent.getStringExtra(EXTRA_PROFILE_ID))
             ACTION_STOP -> handleStop()
             else -> stopSelf(startId)
         }
         return START_NOT_STICKY
+    }
+
+    private fun handleReconnect(profileId: String?) {
+        stopTrafficTicker()
+        val targetId = profileId ?: currentProfile?.id ?: ProfileStore(this).selectedId()
+        EventLog.add("Reconnecting tunnel…")
+        runCatching { stopXrayTunnel() }
+        RustSshBridge.stop()
+        VpnState.stopped()
+        currentProfile = null
+        syncExternalSurfaces()
+        handleConnect(targetId)
     }
 
     private fun handleConnect(profileId: String?) {
@@ -70,10 +105,15 @@ class AppVpnService : XrayVpnService() {
             fail("Profile not found")
             return
         }
+        if (profile.isExpired()) {
+            fail(getString(R.string.err_config_expired))
+            return
+        }
         val settings = SettingsStore(this).load()
         activeSettings = settings
         currentProfile = profile
         VpnState.connecting(profile)
+        syncExternalSurfaces()
         EventLog.add("Starting ${profile.protocol.label} profile '${profile.name}' -> ${profile.endpoint()}")
         EventLog.add(settingsSummary(settings))
         if (settings.shizukuAutoCaptivePortal) {
@@ -116,7 +156,8 @@ class AppVpnService : XrayVpnService() {
         }
 
         val config = try {
-            ConfigBuilder.configFor(profile, settings)
+            val resolved = RrConfigCodec.resolveForConnect(profile)
+            ConfigBuilder.configFor(resolved, settings)
         } catch (error: Throwable) {
             fail("Cannot build config: ${safeMessage(error)}")
             return
@@ -183,7 +224,9 @@ class AppVpnService : XrayVpnService() {
             stopSelf()
             return
         }
+        stopTrafficTicker()
         VpnState.stopping()
+        syncExternalSurfaces()
         EventLog.add("Stopping tunnel")
         runCatching { stopXrayTunnel() }
             .onFailure { EventLog.add("Stop failed: ${safeMessage(it)}") }
@@ -191,6 +234,7 @@ class AppVpnService : XrayVpnService() {
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
         VpnState.stopped()
         currentProfile = null
+        syncExternalSurfaces()
         stopForegroundCompat()
         stopSelf()
     }
@@ -204,6 +248,8 @@ class AppVpnService : XrayVpnService() {
         val profile = currentProfile
         VpnState.connected()
         EventLog.add("Tunnel started")
+        syncExternalSurfaces()
+        startTrafficTicker()
         val notification = buildNotification(
             title = "RustRay · Connected",
             text = profile?.let { "${it.name} · ${it.endpoint()}" } ?: "VPN connected",
@@ -282,7 +328,9 @@ class AppVpnService : XrayVpnService() {
         runCatching { stopXrayTunnel() }
         RustSshBridge.stop()
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
+        stopTrafficTicker()
         VpnState.failed("VPN access was revoked")
+        syncExternalSurfaces()
         currentProfile = null
         stopForegroundCompat()
         stopSelf()
@@ -290,6 +338,7 @@ class AppVpnService : XrayVpnService() {
     }
 
     override fun onDestroy() {
+        stopTrafficTicker()
         RustSshBridge.stop()
         instance = null
         super.onDestroy()
@@ -319,7 +368,9 @@ class AppVpnService : XrayVpnService() {
     private fun fail(message: String) {
         RustSshBridge.stop()
         ShizukuCaptivePortal.restoreOnVpnStopAsync(this)
+        stopTrafficTicker()
         VpnState.failed(message)
+        syncExternalSurfaces()
         EventLog.add("Connection failed: $message")
         // Leave a dismissible failure notification so a background start is visible.
         val notification = buildNotification(
@@ -383,7 +434,8 @@ class AppVpnService : XrayVpnService() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
         if (withDisconnect) {
-            builder.addAction(0, "Disconnect", stopIntent())
+            builder.addAction(0, getString(R.string.reconnect), reconnectIntent())
+            builder.addAction(0, getString(R.string.disconnect), stopIntent())
         }
         return builder.build()
     }
@@ -401,6 +453,73 @@ class AppVpnService : XrayVpnService() {
         Intent(this, AppVpnService::class.java).setAction(ACTION_STOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+
+    private fun reconnectIntent(): PendingIntent = PendingIntent.getService(
+        this,
+        2,
+        Intent(this, AppVpnService::class.java).setAction(ACTION_RECONNECT),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun startTrafficTicker() {
+        stopTrafficTicker()
+        if (!activeSettings.notificationTraffic) return
+        notifLastUp = -1L
+        notifLastDown = -1L
+        notifLastAt = 0L
+        notifHandler.postDelayed(trafficTicker, 2000L)
+    }
+
+    private fun stopTrafficTicker() {
+        notifHandler.removeCallbacks(trafficTicker)
+    }
+
+    private fun updateTrafficNotification() {
+        val stats = runCatching { snapshot().tunStats }.getOrNull() ?: return
+        val up = stats.uplinkBytes
+        val down = stats.downlinkBytes
+        val now = SystemClock.elapsedRealtime()
+        val upRate: Long
+        val downRate: Long
+        if (notifLastUp < 0 || notifLastDown < 0 || now - notifLastAt > 6000) {
+            upRate = 0L
+            downRate = 0L
+        } else {
+            val dt = (now - notifLastAt).coerceAtLeast(1)
+            upRate = ((up - notifLastUp).coerceAtLeast(0) * 1000) / dt
+            downRate = ((down - notifLastDown).coerceAtLeast(0) * 1000) / dt
+        }
+        notifLastUp = up
+        notifLastDown = down
+        notifLastAt = now
+
+        val profileName = currentProfile?.name ?: VpnState.profileName.ifBlank { "VPN" }
+        val text = "↑ ${formatRateShort(upRate)} · ↓ ${formatRateShort(downRate)} | ↑ ${formatBytesShort(up)} · ↓ ${formatBytesShort(down)}"
+        val notification = buildNotification(
+            title = "RustRay · $profileName",
+            text = text,
+            ongoing = true,
+            withDisconnect = true,
+        )
+        notifyCompat(NOTIFICATION_ID, notification)
+    }
+
+    private fun formatBytesShort(bytes: Long): String {
+        val b = bytes.coerceAtLeast(0).toDouble()
+        return when {
+            b >= 1024 * 1024 * 1024 -> String.format("%.1f GB", b / (1024 * 1024 * 1024))
+            b >= 1024 * 1024 -> String.format("%.1f MB", b / (1024 * 1024))
+            b >= 1024 -> String.format("%.0f KB", b / 1024)
+            else -> "${bytes.coerceAtLeast(0)} B"
+        }
+    }
+
+    private fun formatRateShort(bps: Long): String = "${formatBytesShort(bps)}/s"
+
+    private fun syncExternalSurfaces() {
+        RustRayWidgetProvider.refreshAll(this)
+        TileSync.requestUpdates(this)
+    }
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -430,6 +549,7 @@ class AppVpnService : XrayVpnService() {
 
     companion object {
         const val ACTION_CONNECT = "io.rustray.app.CONNECT"
+        const val ACTION_RECONNECT = "io.rustray.app.RECONNECT"
         const val ACTION_STOP = "io.rustray.app.STOP"
         const val EXTRA_PROFILE_ID = "profile_id"
 

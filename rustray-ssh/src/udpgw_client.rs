@@ -274,7 +274,8 @@ async fn run_udpgw_loop(
             }
         });
 
-        let mut keepalive_tick = interval(KEEPALIVE_INTERVAL);
+        let ka_interval = if pool.is_enhanced() { Duration::from_secs(5) } else { KEEPALIVE_INTERVAL };
+        let mut keepalive_tick = interval(ka_interval);
         keepalive_tick.tick().await;
         let mut coalesced: Vec<u8> = Vec::with_capacity(8192);
 

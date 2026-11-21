@@ -12,7 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:background="@color/bg"
-        android:title="Pengaturan"
+        android:title="@string/settings"
         android:titleTextColor="@color/text"
         app:menu="@menu/edit"
         app:navigationIcon="@drawable/ic_back"
@@ -34,7 +34,7 @@
             android:paddingEnd="16dp"
             android:paddingBottom="36dp">
 
-            <!-- Card 1: Mode Cepat -->
+            <!-- Card 1: Quick Mode & Language -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
@@ -48,14 +48,14 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="MODE CEPAT"
+                        android:text="@string/section_quick_mode"
                         android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
-                        android:text="Pilih profil siap pakai untuk gaming atau kembalikan ke setelan standar."
+                        android:text="@string/quick_mode_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="13sp" />
 
@@ -72,7 +72,7 @@
                             android:layout_height="48dp"
                             android:layout_marginEnd="6dp"
                             android:layout_weight="1"
-                            android:text="Mode Game"
+                            android:text="@string/btn_game_mode"
                             android:textColor="@color/primary" />
 
                         <com.google.android.material.button.MaterialButton
@@ -82,13 +82,28 @@
                             android:layout_height="48dp"
                             android:layout_marginStart="6dp"
                             android:layout_weight="1"
-                            android:text="Standar"
+                            android:text="@string/btn_standard"
                             android:textColor="@color/text" />
                     </LinearLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilLanguage"
+                        style="@style/Widget.RustRay.TextInput.Dropdown"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:hint="@string/hint_language">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/ddLanguage"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Card 2: Koneksi -->
+            <!-- Card 2: Connection -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -103,7 +118,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="KONEKSI"
+                        android:text="@string/section_connection"
                         android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -111,8 +126,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:hint="MTU"
-                        app:helperText="Rentang 1280 hingga 9000. Nilai 1380 cocok untuk game."
+                        android:hint="@string/hint_mtu"
+                        app:helperText="@string/helper_mtu"
                         app:helperTextTextColor="@color/text_dim">
 
                         <com.google.android.material.textfield.TextInputEditText
@@ -129,7 +144,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:hint="Profil Kinerja">
+                        android:hint="@string/hint_runtime_profile">
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/ddRuntimeProfile"
@@ -150,13 +165,13 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:minHeight="48dp"
-                        android:text="Rute IPv6"
+                        android:text="@string/sw_ipv6"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Aktifkan jika server mendukung IPv6."
+                        android:text="@string/sw_ipv6_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -166,13 +181,13 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:minHeight="48dp"
-                        android:text="Rebind Jaringan Otomatis"
+                        android:text="@string/sw_rebind"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Segarkan tunnel saat berpindah antara Wi-Fi dan seluler."
+                        android:text="@string/sw_rebind_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -182,19 +197,34 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:minHeight="48dp"
-                        android:text="Ikat Jaringan Aktif"
+                        android:text="@string/sw_bind_underlying"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Matikan bila memakai VPN inject tanpa kuota reguler."
+                        android:text="@string/sw_bind_underlying_desc"
+                        android:textColor="@color/text_dim"
+                        android:textSize="12sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/swNotifTraffic"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:minHeight="48dp"
+                        android:text="@string/sw_notif_traffic"
+                        android:textColor="@color/text" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/sw_notif_traffic_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Card 3: DNS & Trafik -->
+            <!-- Card 3: DNS & Traffic -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -209,7 +239,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="DNS &amp; TRAFIK"
+                        android:text="@string/section_dns_traffic"
                         android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
@@ -218,13 +248,13 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:minHeight="48dp"
-                        android:text="Sniffing Paket"
+                        android:text="@string/sw_sniffing"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Deteksi domain tujuan dari trafik HTTP, TLS, dan QUIC."
+                        android:text="@string/sw_sniffing_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -234,7 +264,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:minHeight="48dp"
-                        android:text="Hanya Metadata"
+                        android:text="@string/sw_sniffing_metadata"
                         android:textColor="@color/text" />
 
                     <View
@@ -249,13 +279,13 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:minHeight="48dp"
-                        android:text="FakeIP"
+                        android:text="@string/sw_fake_ip"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Matikan jika game atau panggilan suara bermasalah."
+                        android:text="@string/sw_fake_ip_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -264,8 +294,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:hint="Server DNS"
-                        app:helperText="Pisahkan dengan koma, contoh 1.1.1.1, 8.8.8.8"
+                        android:hint="@string/hint_dns_servers"
+                        app:helperText="@string/helper_dns_servers"
                         app:helperTextTextColor="@color/text_dim">
 
                         <com.google.android.material.textfield.TextInputEditText
@@ -282,7 +312,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:hint="Strategi DNS">
+                        android:hint="@string/hint_query_strategy">
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/ddQueryStrategy"
@@ -293,7 +323,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Card 4: Aplikasi (Split Tunneling) -->
+            <!-- Card 4: Apps (Split Tunneling) -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -308,7 +338,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="APLIKASI"
+                        android:text="@string/section_apps"
                         android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -317,7 +347,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:hint="Filter Aplikasi">
+                        android:hint="@string/hint_split_mode">
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
                             android:id="@+id/ddSplitMode"
@@ -332,7 +362,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:layout_marginTop="12dp"
-                        android:text="Pilih Aplikasi"
+                        android:text="@string/btn_pick_apps"
                         android:textColor="@color/text" />
 
                     <TextView
@@ -340,7 +370,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
-                        android:text="Semua aplikasi menggunakan koneksi VPN."
+                        android:text="@string/split_summary_all"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -361,7 +391,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="SHIZUKU"
+                        android:text="@string/section_shizuku"
                         android:textAppearance="@style/TextAppearance.RustRay.Label" />
 
                     <TextView
@@ -369,7 +399,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="Memeriksa layanan Shizuku..."
+                        android:text="@string/shizuku_checking"
                         android:textColor="@color/text"
                         android:textSize="13sp" />
 
@@ -378,7 +408,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
-                        android:text="Captive portal: Bawaan"
+                        android:text="@string/captive_default"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -388,7 +418,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:layout_marginTop="12dp"
-                        android:text="Izinkan Shizuku"
+                        android:text="@string/btn_allow_shizuku"
                         android:textColor="@color/primary" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
@@ -397,13 +427,13 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:minHeight="48dp"
-                        android:text="Bypass Captive Portal Otomatis"
+                        android:text="@string/sw_shizuku_auto"
                         android:textColor="@color/text" />
 
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Nonaktifkan saat VPN menyala dan pulihkan saat berhenti."
+                        android:text="@string/sw_shizuku_auto_desc"
                         android:textColor="@color/text_dim"
                         android:textSize="12sp" />
 
@@ -420,7 +450,7 @@
                             android:layout_height="48dp"
                             android:layout_marginEnd="6dp"
                             android:layout_weight="1"
-                            android:text="Nonaktifkan"
+                            android:text="@string/btn_disable"
                             android:textColor="@color/primary" />
 
                         <com.google.android.material.button.MaterialButton
@@ -430,7 +460,7 @@
                             android:layout_height="48dp"
                             android:layout_marginStart="6dp"
                             android:layout_weight="1"
-                            android:text="Pulihkan"
+                            android:text="@string/btn_restore"
                             android:textColor="@color/text" />
                     </LinearLayout>
                 </LinearLayout>

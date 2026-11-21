@@ -82,9 +82,19 @@ data class Profile(
     val sshProxy: String = "",
     val sshUdpgwPort: Int = 7300,
     val sshPoolSize: Int = 1,
+    val sshEnhanced: Boolean = false,
     val importedConfig: String? = null,
     val plaintext: Boolean = false,
+    val rrBlobBase64: String = "",
+    val rrLockServer: Boolean = false,
+    val rrLockPayload: Boolean = false,
+    val rrExpiryEpochMs: Long = 0L,
+    val rrNotesHtml: String = "",
 ) {
+    val isRrLocked: Boolean get() = rrLockServer || rrLockPayload
+    fun isExpired(nowMs: Long = System.currentTimeMillis()): Boolean =
+        rrExpiryEpochMs > 0L && nowMs > rrExpiryEpochMs
+
     val isImported: Boolean get() = importedConfig != null
 
     fun endpoint(): String = if (port in 1..65535) "$server:$port" else server
@@ -116,7 +126,13 @@ data class Profile(
         .put("sshProxy", sshProxy)
         .put("sshUdpgwPort", sshUdpgwPort)
         .put("sshPoolSize", sshPoolSize)
+        .put("sshEnhanced", sshEnhanced)
         .put("plaintext", plaintext)
+        .put("rrBlobBase64", rrBlobBase64)
+        .put("rrLockServer", rrLockServer)
+        .put("rrLockPayload", rrLockPayload)
+        .put("rrExpiryEpochMs", rrExpiryEpochMs)
+        .put("rrNotesHtml", rrNotesHtml)
         .apply { importedConfig?.let { put("importedConfig", it) } }
 
     companion object {
@@ -147,9 +163,15 @@ data class Profile(
             sshProxy = json.optString("sshProxy"),
             sshUdpgwPort = json.optInt("sshUdpgwPort", 7300).coerceIn(1, 65535),
             sshPoolSize = json.optInt("sshPoolSize", 1).coerceIn(1, 4),
+            sshEnhanced = json.optBoolean("sshEnhanced", false),
             importedConfig = json.optString("importedConfig")
                 .takeIf { it.isNotEmpty() && it != "null" },
             plaintext = json.optBoolean("plaintext", false),
+            rrBlobBase64 = json.optString("rrBlobBase64"),
+            rrLockServer = json.optBoolean("rrLockServer", false),
+            rrLockPayload = json.optBoolean("rrLockPayload", false),
+            rrExpiryEpochMs = json.optLong("rrExpiryEpochMs", 0L),
+            rrNotesHtml = json.optString("rrNotesHtml"),
         )
 
         fun encodeList(list: List<Profile>): String {
