@@ -1,7 +1,9 @@
 use std::io;
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use base64::Engine;
@@ -9,7 +11,7 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, Error as TlsError, SignatureScheme};
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{lookup_host, TcpStream};
 use tokio::time::{sleep, timeout};
 use tokio_rustls::TlsConnector;
@@ -25,6 +27,68 @@ pub type SocketProtector = Arc<dyn Fn(i32) -> bool + Send + Sync>;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const DELAY_SPLIT_DURATION: Duration = Duration::from_millis(250);
+const PEEK_SECOND_RESPONSE_TIMEOUT: Duration = Duration::from_millis(350);
+
+/// Wraps an `AsyncStream` with already-peeked prefix bytes (e.g. `SSH-` banner) so `russh`
+/// receives the complete SSH identification string from byte 0.
+struct PrefixedStream {
+    prefix: Vec<u8>,
+    offset: usize,
+    inner: BoxedStream,
+}
+
+impl PrefixedStream {
+    fn new(prefix: Vec<u8>, inner: BoxedStream) -> BoxedStream {
+        if prefix.is_empty() {
+            inner
+        } else {
+            Box::new(Self {
+                prefix,
+                offset: 0,
+                inner,
+            })
+        }
+    }
+}
+
+impl AsyncRead for PrefixedStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.offset < self.prefix.len() {
+            let rem = &self.prefix[self.offset..];
+            let to_copy = rem.len().min(buf.remaining());
+            buf.put_slice(&rem[..to_copy]);
+            self.offset += to_copy;
+            if self.offset >= self.prefix.len() {
+                self.prefix.clear();
+                self.offset = 0;
+            }
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut *self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PrefixedStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut *self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_shutdown(cx)
+    }
+}
 
 #[derive(Debug)]
 struct NoCertVerify;
@@ -100,14 +164,12 @@ pub async fn open_transport(
     match mode.as_str() {
         "direct" | "" => Ok(Box::new(tcp)),
         "payload" | "proxy" => {
-            let mut stream: BoxedStream = Box::new(tcp);
-            send_http_payload(&mut stream, cfg, proxy.as_ref()).await?;
-            Ok(stream)
+            let stream: BoxedStream = Box::new(tcp);
+            send_http_payload(stream, cfg, proxy.as_ref()).await
         }
         "ws" => {
-            let mut stream: BoxedStream = Box::new(tcp);
-            send_ws_upgrade(&mut stream, cfg, proxy.as_ref()).await?;
-            Ok(stream)
+            let stream: BoxedStream = Box::new(tcp);
+            send_ws_upgrade(stream, cfg, proxy.as_ref()).await
         }
         "ssl" => {
             let tls = wrap_tls(tcp, &cfg.effective_sni()).await?;
@@ -115,15 +177,13 @@ pub async fn open_transport(
         }
         "ssl_payload" => {
             let tls = wrap_tls(tcp, &cfg.effective_sni()).await?;
-            let mut stream: BoxedStream = Box::new(tls);
-            send_http_payload(&mut stream, cfg, proxy.as_ref()).await?;
-            Ok(stream)
+            let stream: BoxedStream = Box::new(tls);
+            send_http_payload(stream, cfg, proxy.as_ref()).await
         }
         "ssl_ws" => {
             let tls = wrap_tls(tcp, &cfg.effective_sni()).await?;
-            let mut stream: BoxedStream = Box::new(tls);
-            send_ws_upgrade(&mut stream, cfg, proxy.as_ref()).await?;
-            Ok(stream)
+            let stream: BoxedStream = Box::new(tls);
+            send_ws_upgrade(stream, cfg, proxy.as_ref()).await
         }
         other => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -220,11 +280,19 @@ enum PayloadStep {
 }
 
 async fn send_http_payload(
-    stream: &mut BoxedStream,
+    mut stream: BoxedStream,
     cfg: &SshBridgeConfig,
     proxy: Option<&ParsedProxy>,
-) -> io::Result<()> {
+) -> io::Result<BoxedStream> {
     let steps = render_payload_steps(&cfg.payload, cfg, proxy);
+    let mut http_blocks = 0usize;
+    for step in &steps {
+        if let PayloadStep::Write(chunk) = step {
+            http_blocks += chunk.matches("\r\n\r\n").count();
+        }
+    }
+    let expected_responses = http_blocks.clamp(1, 3);
+
     for step in steps {
         match step {
             PayloadStep::Write(chunk) => {
@@ -238,14 +306,14 @@ async fn send_http_payload(
             }
         }
     }
-    drain_http_response_headers(stream).await
+    consume_http_responses(stream, expected_responses).await
 }
 
 async fn send_ws_upgrade(
-    stream: &mut BoxedStream,
+    mut stream: BoxedStream,
     cfg: &SshBridgeConfig,
     proxy: Option<&ParsedProxy>,
-) -> io::Result<()> {
+) -> io::Result<BoxedStream> {
     if !cfg.payload.trim().is_empty() {
         return send_http_payload(stream, cfg, proxy).await;
     }
@@ -266,7 +334,7 @@ async fn send_ws_upgrade(
     );
     stream.write_all(req.as_bytes()).await?;
     stream.flush().await?;
-    drain_http_response_headers(stream).await
+    consume_http_responses(stream, 1).await
 }
 
 fn render_payload_steps(
@@ -301,12 +369,12 @@ fn render_payload_steps(
         template.to_string()
     };
 
-    // Normalize split markers into internal sentinels before expanding tags
     const INSTANT_SPLIT: &str = "\u{0000}SPLIT\u{0000}";
     const DELAY_SPLIT: &str = "\u{0000}DSPLIT\u{0000}";
 
     let expanded = base
         .replace("[instant_split]", INSTANT_SPLIT)
+        .replace("[splitNoDelay]", INSTANT_SPLIT)
         .replace("[split]", INSTANT_SPLIT)
         .replace("[delay_split]", DELAY_SPLIT)
         .replace("[splitDelay]", DELAY_SPLIT)
@@ -317,6 +385,7 @@ fn render_payload_steps(
         .replace("[netData]", &format!("CONNECT {host_port} HTTP/1.1"))
         .replace("[real_raw]", &format!("CONNECT {host_port} HTTP/1.1\r\n\r\n"))
         .replace("[raw]", &format!("CONNECT {host_port} HTTP/1.1\r\n\r\n"))
+        .replace("[method]", "CONNECT")
         .replace("[host_port]", &host_port)
         .replace("[ssh]", &host_port)
         .replace("[host]", &cfg.host)
@@ -341,36 +410,171 @@ fn render_payload_steps(
     steps
 }
 
-async fn drain_http_response_headers(stream: &mut BoxedStream) -> io::Result<()> {
-    let mut header = Vec::with_capacity(512);
-    let mut byte = [0u8; 1];
-    timeout(HANDSHAKE_TIMEOUT, async {
-        loop {
-            let n = stream.read(&mut byte).await?;
-            if n == 0 {
+/// HTTP Custom-style response handler:
+/// - Handles single or stacked HTTP responses (e.g. `200 OK` followed by `101 Switching Protocols` on `[split]` payloads).
+/// - Preserves any `SSH-` banner immediately via `PrefixedStream` if the server skips HTTP framing.
+/// - Surfaces clear HTTP error status lines (e.g. `HTTP/1.1 403 Forbidden`, `HTTP/1.1 302 Found`) instead of passing HTML to `russh`.
+async fn consume_http_responses(
+    mut stream: BoxedStream,
+    expected_responses: usize,
+) -> io::Result<BoxedStream> {
+    let mut responses_seen = 0usize;
+    let mut last_status_line = String::new();
+    let mut last_code: u16 = 0;
+
+    for attempt in 0..4usize {
+        let mut probe = [0u8; 4];
+        let wait_dur = if attempt == 0 || responses_seen < expected_responses {
+            HANDSHAKE_TIMEOUT
+        } else {
+            PEEK_SECOND_RESPONSE_TIMEOUT
+        };
+
+        let first_read = match timeout(wait_dur, read_exact_or_partial(&mut stream, &mut probe)).await {
+            Ok(Ok(0)) => {
+                if last_code == 101 || last_code == 200 {
+                    return Ok(stream);
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "EOF waiting for HTTP proxy/upgrade response",
+                    if last_status_line.is_empty() {
+                        "EOF waiting for HTTP proxy/upgrade response".to_string()
+                    } else {
+                        format!("Proxy closed after: {last_status_line}")
+                    },
                 ));
             }
-            header.push(byte[0]);
-            if header.ends_with(b"\r\n\r\n") {
-                let first_line = String::from_utf8_lossy(&header)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                log::info!("HTTP transport response: {}", first_line);
-                return Ok(());
-            }
-            if header.len() > 8192 {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                // Timed out peeking for an optional second HTTP header after a 200/101 -> tunnel is ready!
+                if last_code == 101 || last_code == 200 {
+                    return Ok(stream);
+                }
                 return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "HTTP response header exceeded 8KB",
+                    io::ErrorKind::TimedOut,
+                    "HTTP proxy/upgrade timed out",
                 ));
             }
+        };
+
+        // If server already sent the SSH banner (`SSH-...`), hand it directly to russh intact.
+        if first_read >= 4 && &probe[..4] == b"SSH-" {
+            return Ok(PrefixedStream::new(probe[..first_read].to_vec(), stream));
         }
-    })
-    .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "HTTP proxy/upgrade timed out"))?
+
+        // If not an HTTP response header and we already saw a 101/200, pass bytes through to russh.
+        if !(first_read >= 4 && &probe[..4] == b"HTTP") {
+            if last_code == 101 || last_code == 200 {
+                return Ok(PrefixedStream::new(probe[..first_read].to_vec(), stream));
+            }
+            let preview = String::from_utf8_lossy(&probe[..first_read]);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unexpected proxy response: {preview}"),
+            ));
+        }
+
+        // Read the remainder of this HTTP header block until `\r\n\r\n`.
+        let mut header = Vec::with_capacity(512);
+        header.extend_from_slice(&probe[..first_read]);
+        let mut byte = [0u8; 1];
+        timeout(HANDSHAKE_TIMEOUT, async {
+            while !header.ends_with(b"\r\n\r\n") {
+                let n = stream.read(&mut byte).await?;
+                if n == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "EOF while reading HTTP response headers",
+                    ));
+                }
+                header.push(byte[0]);
+                if header.len() > 8192 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "HTTP response header exceeded 8KB",
+                    ));
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "HTTP header read timed out"))??;
+
+        let header_str = String::from_utf8_lossy(&header);
+        let status_line = header_str.lines().next().unwrap_or("").trim().to_string();
+        let code = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(0);
+        let content_len = header_str
+            .lines()
+            .skip(1)
+            .find_map(|line| {
+                let (k, v) = line.split_once(':')?;
+                if k.trim().eq_ignore_ascii_case("content-length") {
+                    v.trim().parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+
+        log::info!("HTTP transport response #{}: {}", responses_seen + 1, status_line);
+        responses_seen += 1;
+        last_status_line = status_line.clone();
+        last_code = code;
+
+        // If 101 Switching Protocols, upgrade succeeded — check once if another stacked header follows only when expected_responses > responses_seen.
+        if code == 101 {
+            if responses_seen >= expected_responses {
+                return Ok(stream);
+            }
+            continue;
+        }
+
+        // If 200 OK / Connection Established:
+        // - If we sent multiple HTTP blocks (`[split]`), continue loop to consume the next `101`/`200` or peek `SSH-`.
+        // - If single request, still peek briefly in case proxy sends a second stacked HTTP header (common on WS/CDN proxies).
+        if code == 200 {
+            continue;
+        }
+
+        // Non-101/200 (e.g. 302, 400, 403, 502):
+        // On multi-block `[split]` payloads, the first dummy block may intentionally get 400/302 before the real `101` arrives.
+        if responses_seen < expected_responses {
+            if content_len > 0 && content_len <= 16384 {
+                let mut discard = vec![0u8; content_len];
+                let _ = timeout(Duration::from_secs(2), stream.read_exact(&mut discard)).await;
+            }
+            continue;
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            format!("Proxy/bug rejected: {status_line}"),
+        ));
+    }
+
+    if last_code == 101 || last_code == 200 {
+        Ok(stream)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            format!("Proxy/bug rejected: {last_status_line}"),
+        ))
+    }
+}
+
+async fn read_exact_or_partial(stream: &mut BoxedStream, buf: &mut [u8]) -> io::Result<usize> {
+    let mut read_total = 0usize;
+    while read_total < buf.len() {
+        let n = stream.read(&mut buf[read_total..]).await?;
+        if n == 0 {
+            break;
+        }
+        read_total += n;
+    }
+    Ok(read_total)
 }
