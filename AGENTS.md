@@ -4,7 +4,7 @@
 
 RustRay is an Android VPN client for V2Ray-style links: `vless://`, `vmess://`, `trojan://`. The repository now includes a small Rust crate, `rustray-ssh/`, for SSH profiles alongside the prebuilt `io.github.aimalygin:xray-rust-mobile:0.10.0` JNI library. The xray-rust core is an independent, client-only Rust reimplementation of Xray, not the official Go `xray-core`.
 
-App identity: `io.rustray.app`, version `1.2.6` (`versionCode` 11), `minSdk` 24, `targetSdk` 35. Imported profiles are editable, but saving clears `importedConfig`; there are no subscription URLs or latency checks. Profiles can also be exported/imported as encrypted `.rr` files. VLESS without TLS uses a DNS-alias workaround; Shizuku captive-portal control is opt-in. The UI has English and Indonesian strings, a widget, and Quick Settings tiles. Release APKs are produced by GitHub Actions; binaries are not committed.
+App identity: `io.rustray.app`, version `1.2.6` (`versionCode` 12), `minSdk` 24, `targetSdk` 35. Imported profiles are editable, but saving clears `importedConfig`; there are no subscription URLs or latency checks. Profiles can also be exported/imported as encrypted `.rr` files. VLESS without TLS uses a DNS-alias workaround; Shizuku captive-portal control is opt-in. The UI has English and Indonesian strings, a widget, and Quick Settings tiles. Release APKs are produced by GitHub Actions; binaries are not committed.
 
 ## Architecture & Data Flow
 
