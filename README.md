@@ -11,7 +11,7 @@
 
 ---
 
-&lt;a id=&quot;english&quot;&gt;&lt;/a&gt;
+<a id="english"></a>
 ## English
 
 **RustRay** is a lightweight, native Rust-powered Android VPN client combining [`xray-rust-mobile`](https://github.com/aimalygin/xray-rust-mobile) (`0.10.0`) with a custom native Rust SSH + BadVPN UDPGW engine (`russh 0.65` + `ring`).
@@ -71,7 +71,7 @@ For GitHub Actions automated builds and setting up your private `.rr` encryption
 
 ---
 
-&lt;a id=&quot;bahasa-indonesia&quot;&gt;&lt;/a&gt;
+<a id="bahasa-indonesia"></a>
 ## Bahasa Indonesia
 
 **RustRay** adalah klien VPN Android ringan berbasis Rust native yang menggabungkan inti [`xray-rust-mobile`](https://github.com/aimalygin/xray-rust-mobile) (`0.10.0`) dengan engine SSH + BadVPN UDPGW native Rust buatan sendiri (`russh 0.65` + `ring`).
