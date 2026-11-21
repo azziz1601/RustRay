@@ -19,6 +19,7 @@ class RustRayProfileTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        VpnState.syncFromDisk(this)
         val store = ProfileStore(this)
         val profiles = store.load()
         if (profiles.isEmpty()) {
@@ -100,6 +101,7 @@ class RustRayProfileTileService : TileService() {
     }
 
     private fun syncTile() {
+        VpnState.syncFromDisk(this)
         val tile = qsTile ?: return
         val store = ProfileStore(this)
         val profiles = store.load()

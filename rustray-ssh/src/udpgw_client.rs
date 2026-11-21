@@ -38,7 +38,7 @@ impl UdpgwClient {
         stats: Arc<BridgeStats>,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Arc<Self> {
-        let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
         let routes: Arc<RwLock<HashMap<u16, UdpReplyTx>>> = Arc::new(RwLock::new(HashMap::new()));
         let dns_cache: Arc<RwLock<HashMap<String, (IpAddr, Instant)>>> =
             Arc::new(RwLock::new(HashMap::new()));
@@ -229,7 +229,7 @@ async fn run_udpgw_loop(
         let routes_reader = Arc::clone(&routes);
         let stats_reader = Arc::clone(&stats);
         let mut read_task = tokio::spawn(async move {
-            let mut acc: Vec<u8> = Vec::with_capacity(8192);
+            let mut acc: Vec<u8> = Vec::with_capacity(4096);
             while let Some(msg) = rx_ch.wait().await {
                 match msg {
                     ChannelMsg::Data { data } => {
@@ -277,7 +277,7 @@ async fn run_udpgw_loop(
         let ka_interval = if pool.is_enhanced() { Duration::from_secs(5) } else { KEEPALIVE_INTERVAL };
         let mut keepalive_tick = interval(ka_interval);
         keepalive_tick.tick().await;
-        let mut coalesced: Vec<u8> = Vec::with_capacity(8192);
+        let mut coalesced: Vec<u8> = Vec::with_capacity(4096);
 
         loop {
             if rebind_pending.load(Ordering::Acquire) {

@@ -265,7 +265,7 @@ object ConfigBuilder {
                 JSONObject()
                     .put("enabled", true)
                     .put("ipv4Pool", "198.19.0.0/16")
-                    .put("poolSize", 32768)
+                    .put("poolSize", 4096)
                     .put("ttl", 60),
             )
 
@@ -305,7 +305,7 @@ object ConfigBuilder {
             existingFakeIp
                 .put("enabled", true)
                 .put("ipv4Pool", existingFakeIp.optString("ipv4Pool").ifBlank { "198.19.0.0/16" })
-                .put("poolSize", existingFakeIp.optInt("poolSize", 32768))
+                .put("poolSize", existingFakeIp.optInt("poolSize", 4096))
                 .put("ttl", existingFakeIp.optInt("ttl", 60))
             dns.put("fakeIp", existingFakeIp)
             if (servers.isNotEmpty() && dns.has("servers")) {
@@ -371,7 +371,7 @@ object ConfigBuilder {
                 JSONObject()
                     .put("enabled", true)
                     .put("ipv4Pool", "198.19.0.0/16")
-                    .put("poolSize", 32768)
+                    .put("poolSize", 4096)
                     .put("ttl", 60),
             )
 

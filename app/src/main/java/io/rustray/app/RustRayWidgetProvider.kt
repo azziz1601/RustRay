@@ -31,6 +31,7 @@ class RustRayWidgetProvider : AppWidgetProvider() {
     }
 
     private fun handleToggle(context: Context) {
+        VpnState.syncFromDisk(context)
         when (VpnState.phase) {
             VpnPhase.CONNECTED, VpnPhase.CONNECTING -> {
                 context.startService(
@@ -80,6 +81,7 @@ class RustRayWidgetProvider : AppWidgetProvider() {
         }
 
         private fun buildViews(context: Context): RemoteViews {
+            VpnState.syncFromDisk(context)
             val views = RemoteViews(context.packageName, R.layout.widget_rustray)
             val store = ProfileStore(context)
             val profiles = store.load()

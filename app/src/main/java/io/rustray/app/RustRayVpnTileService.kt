@@ -17,6 +17,7 @@ class RustRayVpnTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        VpnState.syncFromDisk(this)
         when (VpnState.phase) {
             VpnPhase.CONNECTED, VpnPhase.CONNECTING -> {
                 startService(
@@ -65,6 +66,7 @@ class RustRayVpnTileService : TileService() {
     }
 
     private fun syncTile() {
+        VpnState.syncFromDisk(this)
         val tile = qsTile ?: return
         val store = ProfileStore(this)
         val profiles = store.load()

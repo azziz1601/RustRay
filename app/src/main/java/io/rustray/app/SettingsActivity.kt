@@ -337,6 +337,7 @@ class SettingsActivity : AppCompatActivity() {
         store.save(updated)
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(selectedLanguage.tag))
 
+        VpnState.syncFromDisk(this)
         val active = VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING
         val note = if (active) {
             getString(R.string.toast_settings_saved_reconnect)

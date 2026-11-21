@@ -173,7 +173,7 @@ impl SshPool {
         ]);
         preferred.compression = Cow::Borrowed(&[compression::NONE]);
 
-        let window_size = if self.cfg.enhanced { 8 * 1024 * 1024 } else { 4 * 1024 * 1024 };
+        let window_size = if self.cfg.enhanced { 4 * 1024 * 1024 } else { 2 * 1024 * 1024 };
         let keepalive_secs = if self.cfg.enhanced { 8 } else { 15 };
         let config = Arc::new(client::Config {
             window_size,

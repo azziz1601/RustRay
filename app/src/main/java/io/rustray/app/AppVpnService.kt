@@ -37,22 +37,26 @@ class AppVpnService : XrayVpnService() {
     private var notifLastUp = -1L
     private var notifLastDown = -1L
     private var notifLastAt = 0L
+    private var tickCount = 0
     private val trafficTicker = object : Runnable {
         override fun run() {
-            if (VpnState.phase != VpnPhase.CONNECTED || !activeSettings.notificationTraffic) {
+            if (VpnState.phase != VpnPhase.CONNECTED) {
                 return
             }
             val pm = getSystemService(PowerManager::class.java)
             val screenOn = pm?.isInteractive ?: true
             if (screenOn) {
-                updateTrafficNotification()
+                tickCount++
+                publishTrafficSnapshot(updateNotif = activeSettings.notificationTraffic && (tickCount % 2 == 0))
             }
-            notifHandler.postDelayed(this, 2000L)
+            notifHandler.postDelayed(this, 1000L)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        VpnState.init(this)
+        EventLog.init(this)
         instance = this
         createChannel()
     }
@@ -463,21 +467,25 @@ class AppVpnService : XrayVpnService() {
 
     private fun startTrafficTicker() {
         stopTrafficTicker()
-        if (!activeSettings.notificationTraffic) return
+        tickCount = 0
         notifLastUp = -1L
         notifLastDown = -1L
         notifLastAt = 0L
-        notifHandler.postDelayed(trafficTicker, 2000L)
+        notifHandler.postDelayed(trafficTicker, 1000L)
     }
 
     private fun stopTrafficTicker() {
         notifHandler.removeCallbacks(trafficTicker)
     }
 
-    private fun updateTrafficNotification() {
-        val stats = runCatching { snapshot().tunStats }.getOrNull() ?: return
+    private fun publishTrafficSnapshot(updateNotif: Boolean) {
+        val snap = runCatching { snapshot() }.getOrNull() ?: return
+        val stats = snap.tunStats ?: return
         val up = stats.uplinkBytes
         val down = stats.downlinkBytes
+        val sshSummary = if (currentProfile?.protocol == Protocol.SSH) RustSshBridge.statsSummary() else ""
+        VpnState.updateTraffic(up, down, snap.activeConnections, sshSummary)
+        if (!updateNotif) return
         val now = SystemClock.elapsedRealtime()
         val upRate: Long
         val downRate: Long

@@ -120,6 +120,9 @@ class MainActivity : AppCompatActivity() {
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(savedLang))
         }
         super.onCreate(savedInstanceState)
+        VpnState.init(this)
+        EventLog.init(this)
+        VpnState.syncFromDisk(this)
         setContentView(R.layout.activity_main)
         store = ProfileStore(this)
 
@@ -212,6 +215,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshProfiles() {
+        VpnState.syncFromDisk(this)
         val profiles = store.load()
         cachedProfiles = profiles
         var selectedId = store.selectedId()
@@ -257,8 +261,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(profile: Profile) {
-        if (AppVpnService.instance != null &&
-            (VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING) &&
+        VpnState.syncFromDisk(this)
+        if ((VpnState.phase == VpnPhase.CONNECTED || VpnState.phase == VpnPhase.CONNECTING) &&
             VpnState.profileId == profile.id
         ) {
             toast(getString(R.string.toast_disconnect_before_delete))
@@ -333,6 +337,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshUi() {
+        VpnState.syncFromDisk(this)
         val phase = VpnState.phase
         val color = ContextCompat.getColor(
             this,
@@ -415,15 +420,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val snapshot = runCatching { AppVpnService.instance?.snapshot() }.getOrNull()
-        val stats = snapshot?.tunStats
-        if (stats == null) {
-            resetTraffic()
-            return
-        }
-
-        val up = stats.uplinkBytes
-        val down = stats.downlinkBytes
+        val up = VpnState.uplinkBytes
+        val down = VpnState.downlinkBytes
         val now = SystemClock.elapsedRealtime()
         if (lastUpTotal < 0 || lastDownTotal < 0 || now - lastSampleAt > 5000) {
             tvUpRate.text = formatRate(0)
@@ -441,7 +439,7 @@ class MainActivity : AppCompatActivity() {
 
         tvUpTotal.text = formatBytes(up)
         tvDownTotal.text = formatBytes(down)
-        tvConnections.text = getString(R.string.active_connections_fmt, snapshot?.activeConnections ?: 0)
+        tvConnections.text = getString(R.string.active_connections_fmt, VpnState.activeConnections)
     }
 
     private fun resetTraffic() {
@@ -600,7 +598,8 @@ class MainActivity : AppCompatActivity() {
     private fun showLogs() {
         val density = resources.displayMetrics.density
         val text = TextView(this).apply {
-            val sshStats = RustSshBridge.statsSummary()
+            VpnState.syncFromDisk(this@MainActivity)
+            val sshStats = VpnState.sshStats.ifBlank { RustSshBridge.statsSummary() }
             text = if (sshStats.isNotBlank()) "$sshStats\n\n${EventLog.dump()}" else EventLog.dump()
             typeface = android.graphics.Typeface.MONOSPACE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)

@@ -85,7 +85,7 @@ async fn handle_socks5_client(
             };
             send_socks_reply(&mut stream, 0x00, SocketAddr::from(([127, 0, 0, 1], 0))).await?;
             let mut remote = channel.into_stream();
-            let _ = tokio::io::copy_bidirectional_with_sizes(&mut stream, &mut remote, 32 * 1024, 32 * 1024).await;
+            let _ = tokio::io::copy_bidirectional_with_sizes(&mut stream, &mut remote, 16 * 1024, 16 * 1024).await;
             Ok(())
         }
         0x03 => {
@@ -97,7 +97,7 @@ async fn handle_socks5_client(
 
             // Map each unique remote destination to its own UDPGW conid so badvpn-udpgw-rs
             // never destroys an active game UDP socket when another destination is contacted.
-            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(512);
+            let (reply_tx, mut reply_rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(128);
             let dst_conids: Arc<Mutex<HashMap<SocketAddr, u16>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
@@ -119,7 +119,7 @@ async fn handle_socks5_client(
                 }
             });
 
-            let mut buf = vec![0u8; 65535];
+            let mut buf = vec![0u8; 4096];
             let mut tcp_eof = [0u8; 16];
             loop {
                 tokio::select! {

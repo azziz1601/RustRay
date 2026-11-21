@@ -54,6 +54,7 @@
 
         <service
             android:name=".AppVpnService"
+            android:process=":vpn"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
