@@ -79,15 +79,22 @@ object PlaintextVlessCompat {
         var changed = false
         for (index in 0 until outbounds.length()) {
             val outbound = outbounds.optJSONObject(index) ?: continue
-            if (!outbound.optString("protocol").equals("vless", ignoreCase = true)) continue
+            val proto = outbound.optString("protocol").lowercase()
+            if (proto !in listOf("vless", "vmess", "trojan")) continue
             val stream = outbound.optJSONObject("streamSettings") ?: continue
             if (!stream.optString("security", "none").equals("none", ignoreCase = true)) continue
             val settings = outbound.optJSONObject("settings") ?: continue
-            val servers = settings.optJSONArray("vnext") ?: continue
+            val servers = if (proto == "trojan") {
+                settings.optJSONArray("servers")
+            } else {
+                settings.optJSONArray("vnext")
+            } ?: continue
             for (serverIndex in 0 until servers.length()) {
                 val server = servers.optJSONObject(serverIndex) ?: continue
-                val user = server.optJSONArray("users")?.optJSONObject(0) ?: continue
-                if (!user.optString("encryption", "none").equals("none", ignoreCase = true)) continue
+                if (proto == "vless") {
+                    val user = server.optJSONArray("users")?.optJSONObject(0) ?: continue
+                    if (!user.optString("encryption", "none").equals("none", ignoreCase = true)) continue
+                }
                 val address = server.optString("address")
                 if (address.isBlank() || isExemptHost(address)) continue
                 val port = server.optInt("port", 443)

@@ -553,7 +553,7 @@ class EditProfileActivity : AppCompatActivity() {
             sshPoolSize = poolSize,
             sshEnhanced = swSshEnhanced.isChecked,
             importedConfig = null,
-            plaintext = protocol == Protocol.VLESS && security == Security.NONE,
+            plaintext = protocol != Protocol.SSH && security == Security.NONE,
             rrBlobBase64 = rrBlobBase64,
             rrLockServer = rrLockServer,
             rrLockPayload = rrLockPayload,

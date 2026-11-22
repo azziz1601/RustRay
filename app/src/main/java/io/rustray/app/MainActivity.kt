@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Base64
 import android.util.TypedValue
 import android.view.View
 import android.widget.ScrollView
@@ -42,11 +41,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import org.json.JSONObject
-import org.xrayrust.mobile.XrayProfileFormat
-import org.xrayrust.mobile.XrayProfileImporter
-import java.net.URI
-import java.net.URLDecoder
 
 class MainActivity : AppCompatActivity() {
 
@@ -490,21 +484,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun previewOf(link: String): String {
-        val uri = URI(link)
-        val host = uri.host?.removeSurrounding("[", "]")
-            ?: throw IllegalArgumentException("Link has no host")
-        val port = uri.port.takeIf { it in 1..65535 } ?: 443
-        val name = uri.rawFragment
-            ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
-            ?.ifBlank { null }
-            ?: "$host:$port"
-        val scheme = uri.scheme?.uppercase() ?: "LINK"
-        val warning = if (scheme == "VLESS" && PlaintextVlessCompat.prepare(link).plaintext) {
-            "\n\nNo TLS: this link is not encrypted."
-        } else {
-            ""
-        }
-        return "$name\n$scheme · $host:$port$warning"
+        val parsed = ShareLinkParser.parse(link)
+        val tlsTag = if (parsed.plaintext) " · no TLS" else ""
+        return "${parsed.name}\n${parsed.protocol.label} · ${parsed.endpoint()}$tlsTag"
     }
 
     private fun importLink(link: String) {
@@ -526,74 +508,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun buildImportedProfile(link: String): Profile {
-        val format = when {
-            link.startsWith("vless://", ignoreCase = true) -> XrayProfileFormat.Vless
-            link.startsWith("vmess://", ignoreCase = true) -> XrayProfileFormat.Vmess
-            link.startsWith("trojan://", ignoreCase = true) -> XrayProfileFormat.Trojan
-            else -> throw IllegalArgumentException("Unsupported link scheme")
-        }
-
-        if (format == XrayProfileFormat.Vless) {
-            val prepared = PlaintextVlessCompat.prepare(link)
-            val imported = XrayProfileImporter.profile(prepared.importLink, format)
-            val config = if (prepared.alias != null && prepared.target != null) {
-                PlaintextVlessCompat.injectHosts(
-                    configJson = imported.configJson,
-                    alias = prepared.alias,
-                    target = prepared.target,
-                    originalHost = prepared.originalHost,
-                )
-            } else {
-                imported.configJson
-            }
-            return ConfigBuilder.hydrateFromImportedConfig(
-                Profile(
-                    name = prepared.name.ifBlank { prepared.originalHost },
-                    protocol = Protocol.VLESS,
-                    server = prepared.originalHost,
-                    port = prepared.port,
-                    credential = "",
-                    security = Security.fromWire(prepared.security),
-                    network = Network.fromWire(prepared.network),
-                    importedConfig = config,
-                    plaintext = prepared.plaintext,
-                ),
-            )
-        }
-
-        val imported = XrayProfileImporter.profile(link, format)
-        return ConfigBuilder.hydrateFromImportedConfig(
-            Profile(
-                name = imported.name.ifBlank { imported.serverAddress },
-                protocol = if (format == XrayProfileFormat.Vmess) Protocol.VMESS else Protocol.TROJAN,
-                server = imported.serverAddress,
-                port = extractPort(link),
-                credential = "",
-                importedConfig = imported.configJson,
-            ),
-        )
-    }
-
-    private fun extractPort(link: String): Int {
-        if (link.startsWith("vmess://", ignoreCase = true)) {
-            val payload = link.substringAfter("://").substringBefore('#').trim()
-            val decoders = listOf(
-                Base64.DEFAULT or Base64.NO_WRAP or Base64.NO_PADDING,
-                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
-            )
-            for (flags in decoders) {
-                runCatching {
-                    val decoded = String(Base64.decode(payload, flags), Charsets.UTF_8)
-                    return JSONObject(decoded).optString("port").toIntOrNull() ?: 443
-                }
-            }
-            return 443
-        }
-        val match = Regex("://(?:[^@/?#]*@)?(?:\\[[^\\]]+\\]|[^:/?#]+):(\\d{1,5})")
-            .find(link)
-        return match?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 } ?: 443
-    }
+    private fun buildImportedProfile(link: String): Profile = ShareLinkParser.parse(link)
 
     private fun showLogs() {
         val density = resources.displayMetrics.density
