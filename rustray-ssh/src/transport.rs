@@ -25,10 +25,13 @@ pub type BoxedStream = Box<dyn AsyncStream>;
 pub type SocketProtector = Arc<dyn Fn(i32) -> bool + Send + Sync>;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+const MULTI_ADDR_CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const INSTANT_SPLIT_GAP: Duration = Duration::from_millis(15);
 const DELAY_SPLIT_DURATION: Duration = Duration::from_millis(250);
-const PEEK_SECOND_RESPONSE_TIMEOUT: Duration = Duration::from_millis(300);
-const MAX_DRAIN_BODY: usize = 32 * 1024;
+const PEEK_SECOND_RESPONSE_TIMEOUT: Duration = Duration::from_millis(250);
+const MAX_DRAIN_BODY: usize = 256 * 1024;
+const MAX_SCAN_BYTES: usize = 128 * 1024;
 
 /// Wraps an `AsyncStream` with already-peeked prefix bytes (e.g. `SSH-` banner) so `russh`
 /// receives the complete SSH identification string from byte 0.
@@ -199,11 +202,59 @@ async fn connect_protected_tcp(
     enhanced: bool,
     protector: &SocketProtector,
 ) -> io::Result<TcpStream> {
-    let mut addrs = lookup_host((host, port)).await?;
-    let addr: SocketAddr = addrs
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "DNS returned no address"))?;
+    let resolved = lookup_host((host, port)).await?;
+    let mut addrs: Vec<SocketAddr> = Vec::new();
+    for addr in resolved {
+        if !addrs.contains(&addr) {
+            addrs.push(addr);
+        }
+    }
+    if addrs.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            format!("DNS returned no address for {host}:{port}"),
+        ));
+    }
 
+    // Prioritize IPv4 before IPv6 so 5G/dual-stack networks with blackholed IPv6
+    // routes don't stall for 12s before falling back to IPv4.
+    addrs.sort_by_key(|a| if a.is_ipv4() { 0u8 } else { 1u8 });
+    addrs.truncate(4);
+
+    let per_addr_timeout = if addrs.len() > 1 {
+        MULTI_ADDR_CONNECT_TIMEOUT
+    } else {
+        CONNECT_TIMEOUT
+    };
+
+    let mut last_err: Option<io::Error> = None;
+    for addr in addrs {
+        match connect_single_addr(host, port, addr, enhanced, per_addr_timeout, protector).await {
+            Ok(tcp) => return Ok(tcp),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => return Err(err),
+            Err(err) => {
+                log::warn!("TCP connect to {host}:{port} ({addr}) failed: {err}");
+                last_err = Some(err);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("TCP connect timed out ({host}:{port})"),
+        )
+    }))
+}
+
+async fn connect_single_addr(
+    host: &str,
+    port: u16,
+    addr: SocketAddr,
+    enhanced: bool,
+    wait_timeout: Duration,
+    protector: &SocketProtector,
+) -> io::Result<TcpStream> {
     let domain = match addr {
         SocketAddr::V4(_) => Domain::IPV4,
         SocketAddr::V6(_) => Domain::IPV6,
@@ -225,20 +276,39 @@ async fn connect_protected_tcp(
         ));
     }
 
+    let target_label = if host == addr.ip().to_string() {
+        format!("{addr}")
+    } else {
+        format!("{host}:{port} -> {addr}")
+    };
+
     match sock.connect(&addr.into()) {
         Ok(()) => {}
         Err(err) if err.raw_os_error() == Some(libc_einprogress()) => {}
-        Err(err) => return Err(err),
+        Err(err) => {
+            return Err(io::Error::new(
+                err.kind(),
+                format!("TCP connect error ({target_label}): {err}"),
+            ));
+        }
     }
 
     let std_stream: std::net::TcpStream = sock.into();
     let tcp = TcpStream::from_std(std_stream)?;
-    timeout(CONNECT_TIMEOUT, tcp.writable())
+    timeout(wait_timeout, tcp.writable())
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TCP connect timed out"))??;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("TCP connect timed out ({target_label})"),
+            )
+        })??;
 
     if let Some(err) = tcp.take_error()? {
-        return Err(err);
+        return Err(io::Error::new(
+            err.kind(),
+            format!("TCP connect failed ({target_label}): {err}"),
+        ));
     }
     tcp.set_nodelay(true)?;
     Ok(tcp)
@@ -287,27 +357,61 @@ async fn send_http_payload(
 ) -> io::Result<BoxedStream> {
     let steps = render_payload_steps(&cfg.payload, cfg, proxy);
     let mut http_blocks = 0usize;
+    let mut first_req_is_head = false;
+    let mut saw_first_write = false;
+
     for step in &steps {
         if let PayloadStep::Write(chunk) = step {
+            if !saw_first_write && !chunk.trim().is_empty() {
+                saw_first_write = true;
+                first_req_is_head = chunk
+                    .trim_start()
+                    .get(..5)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("HEAD "));
+            }
             http_blocks += chunk.matches("\r\n\r\n").count();
         }
     }
     let expected_responses = http_blocks.clamp(1, 4);
 
+    let mut completed_blocks = 0usize;
+    let mut prev_was_write = false;
+
     for step in steps {
         match step {
             PayloadStep::Write(chunk) => {
-                if !chunk.is_empty() {
-                    stream.write_all(chunk.as_bytes()).await?;
-                    stream.flush().await?;
+                if chunk.is_empty() {
+                    continue;
                 }
+                // Skip trailing dummy HTTP response lines placed after `[split]` in HTTP Custom
+                // templates (e.g. `[split]HTTP/enhanced 200 Ok[crlf]`) so they never leak into
+                // the upgraded SSH stream before `SSH-2.0-`.
+                let trimmed = chunk.trim_start();
+                let is_trailing_fake_status = completed_blocks > 0
+                    && !chunk.contains("\r\n\r\n")
+                    && trimmed
+                        .get(..5)
+                        .is_some_and(|p| p.eq_ignore_ascii_case("HTTP/"));
+                if is_trailing_fake_status {
+                    log::info!("Skipping trailing fake HTTP status line after [split]");
+                    continue;
+                }
+
+                if prev_was_write {
+                    sleep(INSTANT_SPLIT_GAP).await;
+                }
+                stream.write_all(chunk.as_bytes()).await?;
+                stream.flush().await?;
+                completed_blocks += chunk.matches("\r\n\r\n").count();
+                prev_was_write = true;
             }
             PayloadStep::Delay(dur) => {
                 sleep(dur).await;
+                prev_was_write = false;
             }
         }
     }
-    consume_http_responses(stream, expected_responses).await
+    consume_http_responses(stream, expected_responses, first_req_is_head).await
 }
 
 async fn send_ws_upgrade(
@@ -335,7 +439,7 @@ async fn send_ws_upgrade(
     );
     stream.write_all(req.as_bytes()).await?;
     stream.flush().await?;
-    consume_http_responses(stream, 1).await
+    consume_http_responses(stream, 1, false).await
 }
 
 fn render_payload_steps(
@@ -412,13 +516,16 @@ fn render_payload_steps(
 }
 
 /// HTTP Custom-style response handler:
+/// - Immediately hands off to SSH on `101 Switching Protocols` (protocol upgraded).
 /// - Handles stacked HTTP responses (`200`, `400`, `302`, `101`) including `Transfer-Encoding: chunked`
 ///   and `Content-Length` bodies emitted by CDN/proxy responses before the real `101`/`SSH-` stream.
-/// - Scans forward for `SSH-` if a proxy emits custom banner text before SSH starts.
+/// - Never stalls trying to drain bodies on `HEAD` responses or `200` tunnel handoffs.
+/// - Scans forward for `SSH-` or `HTTP/` if a proxy emits custom banner/body text before SSH starts.
 /// - Preserves any peeked `SSH-` banner via `PrefixedStream`.
 async fn consume_http_responses(
     mut stream: BoxedStream,
     expected_responses: usize,
+    first_req_is_head: bool,
 ) -> io::Result<BoxedStream> {
     let mut responses_seen = 0usize;
     let mut last_status_line = String::new();
@@ -463,28 +570,13 @@ async fn consume_http_responses(
             return Ok(PrefixedStream::new(probe[..first_read].to_vec(), stream));
         }
 
-        if !(first_read >= 4 && &probe[..4] == b"HTTP") {
-            // Some CDN/proxy setups emit a small chunked/text body before the next HTTP header or SSH banner.
-            // Scan forward (up to 16 KB) for either `HTTP/` or `SSH-`.
-            let found = scan_for_http_or_ssh(&mut stream, &probe[..first_read]).await?;
-            match found {
+        let header = if first_read >= 4 && &probe[..4] == b"HTTP" {
+            read_http_header_remainder(&mut stream, probe[..first_read].to_vec()).await?
+        } else {
+            // Some CDN/proxy setups emit a chunked/text body before the next HTTP header or SSH banner.
+            match scan_for_http_or_ssh(&mut stream, &probe[..first_read]).await? {
                 ScanHit::Ssh(prefix) => return Ok(PrefixedStream::new(prefix, stream)),
-                ScanHit::Http(prefix) => {
-                    // Fall through to header parser with `prefix`
-                    let header = read_http_header_remainder(&mut stream, prefix).await?;
-                    let (code, status_line, content_len, is_chunked) = parse_http_meta(&header);
-                    log::info!("HTTP transport response #{}: {}", responses_seen + 1, status_line);
-                    responses_seen += 1;
-                    last_status_line = status_line;
-                    last_code = code;
-                    if code == 101 && responses_seen >= expected_responses {
-                        return Ok(stream);
-                    }
-                    if code != 101 {
-                        drain_http_body(&mut stream, content_len, is_chunked).await?;
-                    }
-                    continue;
-                }
+                ScanHit::Http(prefix) => read_http_header_remainder(&mut stream, prefix).await?,
                 ScanHit::None => {
                     if last_code == 101 || last_code == 200 {
                         return Ok(stream);
@@ -502,33 +594,34 @@ async fn consume_http_responses(
                     ));
                 }
             }
-        }
+        };
 
-        let header = read_http_header_remainder(&mut stream, probe[..first_read].to_vec()).await?;
         let (code, status_line, content_len, is_chunked) = parse_http_meta(&header);
         log::info!("HTTP transport response #{}: {}", responses_seen + 1, status_line);
         responses_seen += 1;
         last_status_line = status_line.clone();
         last_code = code;
 
+        // Once 101 Switching Protocols is received, the stream is upgraded to raw SSH/WS tunnel.
         if code == 101 {
-            if responses_seen >= expected_responses {
-                return Ok(stream);
-            }
-            continue;
+            return Ok(stream);
         }
+
+        let no_body_allowed = (first_req_is_head && responses_seen == 1) || code == 204 || code == 304;
 
         if code == 200 {
-            if is_chunked || content_len > 0 {
-                drain_http_body(&mut stream, content_len, is_chunked).await?;
+            if !no_body_allowed && (is_chunked || content_len > 0) && responses_seen < expected_responses {
+                drain_http_body_best_effort(&mut stream, content_len, is_chunked).await?;
             }
             continue;
         }
 
-        // Non-101/200 (302, 400, 403, 502): drain any body (chunked or Content-Length)
-        // when more responses are expected from `[split]` payloads.
+        // Non-101/200 (301, 302, 400, 403, 502): drain any body (chunked or Content-Length)
+        // when more responses are expected from pipelined / `[split]` payloads.
         if responses_seen < expected_responses {
-            drain_http_body(&mut stream, content_len, is_chunked).await?;
+            if !no_body_allowed && (is_chunked || content_len > 0) {
+                drain_http_body_best_effort(&mut stream, content_len, is_chunked).await?;
+            }
             continue;
         }
 
@@ -605,7 +698,10 @@ fn parse_http_meta(header: &[u8]) -> (u16, String, usize, bool) {
     (code, status_line, content_len, is_chunked)
 }
 
-async fn drain_http_body(
+/// Best-effort HTTP body drainer for pipelined payloads:
+/// drains chunked or `Content-Length` bodies up to `MAX_DRAIN_BODY`, and stops gracefully on
+/// timeout rather than aborting so the next loop can still match `HTTP/` or `SSH-`.
+async fn drain_http_body_best_effort(
     stream: &mut BoxedStream,
     content_len: usize,
     is_chunked: bool,
@@ -613,11 +709,17 @@ async fn drain_http_body(
     if is_chunked {
         let mut total_drained = 0usize;
         loop {
-            let line = read_crlf_line(stream, 64).await?;
+            let line = match read_crlf_line(stream, 64).await {
+                Ok(l) => l,
+                Err(err) if err.kind() == io::ErrorKind::TimedOut => break,
+                Err(err) => return Err(err),
+            };
             let size_hex = line.split(';').next().unwrap_or("").trim();
-            let chunk_size = usize::from_str_radix(size_hex, 16).unwrap_or(0);
+            let chunk_size = match usize::from_str_radix(size_hex, 16) {
+                Ok(sz) => sz,
+                Err(_) => break,
+            };
             if chunk_size == 0 {
-                // Consume trailing `\r\n` after `0\r\n`
                 let _ = read_crlf_line(stream, 64).await;
                 break;
             }
@@ -625,16 +727,24 @@ async fn drain_http_body(
                 break;
             }
             let mut discard = vec![0u8; chunk_size + 2];
-            timeout(Duration::from_secs(3), stream.read_exact(&mut discard))
-                .await
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Chunked body drain timed out"))??;
-            total_drained += chunk_size;
+            match timeout(Duration::from_secs(3), stream.read_exact(&mut discard)).await {
+                Ok(Ok(_)) => total_drained += chunk_size,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => break,
+            }
         }
     } else if content_len > 0 && content_len <= MAX_DRAIN_BODY {
-        let mut discard = vec![0u8; content_len];
-        timeout(Duration::from_secs(3), stream.read_exact(&mut discard))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "HTTP body drain timed out"))??;
+        let mut remaining = content_len;
+        let mut buf = [0u8; 4096];
+        while remaining > 0 {
+            let to_read = remaining.min(buf.len());
+            match timeout(Duration::from_secs(3), stream.read(&mut buf[..to_read])).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => remaining -= n,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => break,
+            }
+        }
     }
     Ok(())
 }
@@ -670,7 +780,7 @@ async fn scan_for_http_or_ssh(stream: &mut BoxedStream, initial: &[u8]) -> io::R
     let mut ring: Vec<u8> = initial.to_vec();
     let mut b = [0u8; 1];
     let mut scanned = initial.len();
-    while scanned < 16384 {
+    while scanned < MAX_SCAN_BYTES {
         if ring.ends_with(b"SSH-") {
             return Ok(ScanHit::Ssh(b"SSH-".to_vec()));
         }

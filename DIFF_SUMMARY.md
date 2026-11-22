@@ -1,16 +1,20 @@
-# RustRay Update Diff Summary (VMess/Trojan/VLESS Standalone Parser + Non-TLS Support)
+# RustRay Update Diff Summary (SSH IPv4-First + Payload Jabar/Jatim + Race Condition Fix)
 
-Total **4 file diubah/ditambah** (`+204 / -68` baris).
+Total **2 file diubah** (`+204 / -65` baris).
 
 ## Ringkasan
 
-- **Parser Mandiri `ShareLinkParser.kt`**: Mengganti `XrayProfileImporter` untuk impor `vmess://`, `vless://`, dan `trojan://` sehingga UUID/password, SNI, host, path, gRPC `serviceName`, alterId, dan security selalu terisi penuh (tidak lagi kosong saat diedit) serta mendukung penuh config Non-TLS (`tls: none` / `security=none`).
-- **Perluasan `PlaintextVlessCompat.kt`**: `rewriteConfig()` kini juga menerapkan alias domain single-label + `dns.hosts` untuk outbound **VMess** dan **Trojan** tanpa TLS agar diterima oleh core `xray-rust`.
-- **Pembaruan `MainActivity.kt` & `EditProfileActivity.kt`**: `previewOf()` dan `buildImportedProfile()` memakai `ShareLinkParser.parse()`.
+- **IPv4-First & Fallback di `rustray-ssh/src/transport.rs`**: `connect_protected_tcp()` kini mengumpulkan semua alamat hasil DNS, memprioritaskan IPv4 sebelum IPv6 (menghindari hang 12 detik pada rute IPv6 5G yang di-drop operator), fallback otomatis antar alamat (timeout 6 detik per alamat jika >1 hasil DNS), dan menyertakan target `host:port -> ip:port` pada pesan error TCP.
+- **Perbaikan Parser Payload Jabar & Jatim di `rustray-ssh/src/transport.rs`**:
+  - Langsung melanjutkan ke handshake SSH saat menerima `101 Switching Protocols` tanpa menahan menunggu respons kedua.
+  - Melewati baris status dummy pasca-`[split]` (seperti `[split]HTTP/enhanced 200 Ok[crlf]`) agar tidak bocor ke stream SSH sebelum `SSH-2.0-`.
+  - Jeda singkat `15ms` antar segmen `[split]` supaya paket TCP tidak digabung kernel.
+  - Batas *drain* body HTTP dinaikkan ke `256 KB` (`MAX_SCAN_BYTES = 128 KB`), *best-effort* pada timeout, serta tidak men-drain body untuk respons `HEAD` / `204` / `304` atau `200` tunnel handoff.
+- **Log Proxy & Proteksi Race Condition di `app/src/main/java/io/rustray/app/AppVpnService.kt`**:
+  - Menampilkan `via <proxy>` pada log `Starting SSH` (tetap disembunyikan jika profil `.rr` mengunci payload/proxy).
+  - Menambahkan `connectGeneration` (`AtomicLong`) agar thread SSH lama yang sudah di-Stop tidak dapat memanggil `fail()` dan memutus percobaan koneksi baru.
 
 ## Daftar File
 
-- `app/src/main/java/io/rustray/app/EditProfileActivity.kt` (`+1 / -1`)
-- `app/src/main/java/io/rustray/app/MainActivity.kt` (`+4 / -63`)
-- `app/src/main/java/io/rustray/app/PlaintextVlessCompat.kt` (`+11 / -4`)
-- `app/src/main/java/io/rustray/app/ShareLinkParser.kt` (`+188 / -0`)
+- `rustray-ssh/src/transport.rs` (`+171 / -61`)
+- `app/src/main/java/io/rustray/app/AppVpnService.kt` (`+33 / -4`)
