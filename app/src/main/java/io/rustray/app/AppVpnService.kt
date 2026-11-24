@@ -192,7 +192,7 @@ class AppVpnService : XrayVpnService() {
             return
         }
 
-        if (resolved.network == Network.HTTPUPGRADE && resolved.v2rayCustomPayload) {
+        if (resolved.network == io.rustray.app.Network.HTTPUPGRADE && resolved.v2rayCustomPayload) {
             Thread({
                 val bridgePort = try {
                     RustSshBridge.startPayloadBridge(resolved, this)
