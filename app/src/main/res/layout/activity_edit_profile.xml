@@ -221,38 +221,6 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/tilSshProxy"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/hint_ssh_proxy"
-                app:helperText="@string/helper_ssh_proxy">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etSshProxy"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textNoSuggestions"
-                    android:maxLines="1" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/tilSshPayload"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/hint_ssh_payload">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etSshPayload"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="top|start"
-                    android:inputType="textMultiLine|textNoSuggestions"
-                    android:minLines="3" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilSshUdpgwPort"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -342,6 +310,55 @@
                     android:layout_height="wrap_content"
                     android:inputType="textUri"
                     android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/swV2rayCustomPayload"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:minHeight="48dp"
+                android:text="@string/v2ray_custom_payload"
+                android:textColor="@color/text" />
+
+            <TextView
+                android:id="@+id/tvV2rayCustomPayloadDesc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/v2ray_custom_payload_desc"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSshProxy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="@string/hint_ssh_proxy"
+                app:helperText="@string/helper_ssh_proxy">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSshProxy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textNoSuggestions"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSshPayload"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="@string/hint_ssh_payload">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSshPayload"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine|textNoSuggestions"
+                    android:minLines="3" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout

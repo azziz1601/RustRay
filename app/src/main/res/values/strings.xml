@@ -183,4 +183,6 @@
     <string name="err_config_expired">This config has expired</string>
     <string name="notes_dialog_title">Config Notes</string>
     <string name="locked_placeholder">Locked</string>
+    <string name="v2ray_custom_payload">Use custom payload</string>
+    <string name="v2ray_custom_payload_desc">Inject a custom HTTP payload before HTTPUpgrade via local bridge</string>
 </resources>

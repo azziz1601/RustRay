@@ -53,6 +53,28 @@ object RustSshBridge {
         return port
     }
 
+    fun startPayloadBridge(profile: Profile, vpnService: AppVpnService): Int {
+        ensureLoaded()
+        val transportMode = if (profile.security == Security.TLS) "v2ray_ssl_payload" else "v2ray_payload"
+        val payload = JSONObject()
+            .put("host", profile.server)
+            .put("port", profile.port)
+            .put("username", "")
+            .put("password", "")
+            .put("transportMode", transportMode)
+            .put("payload", profile.sshPayload)
+            .put("proxy", profile.sshProxy)
+            .put("sni", profile.sni.ifBlank { profile.host.ifBlank { profile.server } })
+            .put("wsHost", profile.host.ifBlank { profile.server })
+            .put("wsPath", profile.path.ifBlank { "/" })
+            .put("enhanced", false)
+            .toString()
+
+        val port = nativeStartPayloadBridge(payload, vpnService)
+        check(port in 1..65535) { "Payload bridge returned invalid local TCP port: $port" }
+        return port
+    }
+
     fun stop() {
         if (!libraryLoaded) return
         runCatching { nativeStop() }
@@ -80,6 +102,9 @@ object RustSshBridge {
 
     @JvmStatic
     private external fun nativeStart(configJson: String, vpnService: AppVpnService): Int
+
+    @JvmStatic
+    private external fun nativeStartPayloadBridge(configJson: String, vpnService: AppVpnService): Int
 
     @JvmStatic
     private external fun nativeStop()

@@ -60,6 +60,8 @@ class EditProfileActivity : AppCompatActivity() {
     private lateinit var etSshPoolSize: TextInputEditText
     private lateinit var swSshEnhanced: MaterialSwitch
     private lateinit var tvSshEnhancedDesc: TextView
+    private lateinit var swV2rayCustomPayload: MaterialSwitch
+    private lateinit var tvV2rayCustomPayloadDesc: TextView
     private lateinit var tilNetwork: TextInputLayout
     private lateinit var ddNetwork: MaterialAutoCompleteTextView
     private lateinit var tilPath: TextInputLayout
@@ -167,6 +169,9 @@ class EditProfileActivity : AppCompatActivity() {
         etSshPoolSize = findViewById(R.id.etSshPoolSize)
         swSshEnhanced = findViewById(R.id.swSshEnhanced)
         tvSshEnhancedDesc = findViewById(R.id.tvSshEnhancedDesc)
+        swV2rayCustomPayload = findViewById(R.id.swV2rayCustomPayload)
+        tvV2rayCustomPayloadDesc = findViewById(R.id.tvV2rayCustomPayloadDesc)
+        swV2rayCustomPayload.setOnCheckedChangeListener { _, _ -> updateVisibility() }
         tilNetwork = findViewById(R.id.tilNetwork)
         ddNetwork = findViewById(R.id.ddNetwork)
         tilPath = findViewById(R.id.tilPath)
@@ -229,6 +234,7 @@ class EditProfileActivity : AppCompatActivity() {
         etSshUdpgwPort.setText("7300")
         etSshPoolSize.setText("1")
         swSshEnhanced.isChecked = false
+        swV2rayCustomPayload.isChecked = false
     }
 
     private fun populate(profile: Profile) {
@@ -260,6 +266,7 @@ class EditProfileActivity : AppCompatActivity() {
         etSshUdpgwPort.setText(profile.sshUdpgwPort.toString())
         etSshPoolSize.setText(profile.sshPoolSize.toString())
         swSshEnhanced.isChecked = profile.sshEnhanced
+        swV2rayCustomPayload.isChecked = profile.v2rayCustomPayload
         ddNetwork.setText(profile.network.label, false)
         etPath.setText(profile.path.ifBlank { "/" })
         etHost.setText(profile.host)
@@ -295,6 +302,7 @@ class EditProfileActivity : AppCompatActivity() {
             etSshProxy.isEnabled = false
             etSshPayload.setText(masked)
             etSshPayload.isEnabled = false
+            swV2rayCustomPayload.isEnabled = false
             ddNetwork.isEnabled = false
             etPath.setText(masked)
             etPath.isEnabled = false
@@ -387,6 +395,8 @@ class EditProfileActivity : AppCompatActivity() {
             tilPath.visibility = if (needsWs) View.VISIBLE else View.GONE
             tilHost.visibility = if (needsWs) View.VISIBLE else View.GONE
             tilServiceName.visibility = View.GONE
+            swV2rayCustomPayload.visibility = View.GONE
+            tvV2rayCustomPayloadDesc.visibility = View.GONE
 
             tvSecurityHeader.visibility = if (needsSni) View.VISIBLE else View.GONE
             tilSecurity.visibility = View.GONE
@@ -404,10 +414,15 @@ class EditProfileActivity : AppCompatActivity() {
         val tlsLike = security != Security.NONE
         val framed = network == Network.WS || network == Network.HTTPUPGRADE || network == Network.XHTTP
 
+        val canUseV2rayPayload = network == Network.HTTPUPGRADE
+        val showV2rayPayload = canUseV2rayPayload && swV2rayCustomPayload.isChecked
+
         tilSshUsername.visibility = View.GONE
         tilSshTransport.visibility = View.GONE
-        tilSshProxy.visibility = View.GONE
-        tilSshPayload.visibility = View.GONE
+        swV2rayCustomPayload.visibility = if (canUseV2rayPayload) View.VISIBLE else View.GONE
+        tvV2rayCustomPayloadDesc.visibility = if (canUseV2rayPayload) View.VISIBLE else View.GONE
+        tilSshProxy.visibility = if (showV2rayPayload) View.VISIBLE else View.GONE
+        tilSshPayload.visibility = if (showV2rayPayload) View.VISIBLE else View.GONE
         tilSshUdpgwPort.visibility = View.GONE
         tilSshPoolSize.visibility = View.GONE
         swSshEnhanced.visibility = View.GONE
@@ -552,6 +567,7 @@ class EditProfileActivity : AppCompatActivity() {
             sshUdpgwPort = udpgwPort,
             sshPoolSize = poolSize,
             sshEnhanced = swSshEnhanced.isChecked,
+            v2rayCustomPayload = if (rrLockPayload) false else (protocol != Protocol.SSH && network == Network.HTTPUPGRADE && swV2rayCustomPayload.isChecked),
             importedConfig = null,
             plaintext = protocol != Protocol.SSH && security == Security.NONE,
             rrBlobBase64 = rrBlobBase64,

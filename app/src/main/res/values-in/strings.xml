@@ -183,4 +183,6 @@
     <string name="err_config_expired">Config ini sudah kedaluwarsa</string>
     <string name="notes_dialog_title">Catatan Config</string>
     <string name="locked_placeholder">Terkunci</string>
+    <string name="v2ray_custom_payload">Gunakan payload kustom</string>
+    <string name="v2ray_custom_payload_desc">Suntikkan payload HTTP kustom sebelum HTTPUpgrade via bridge lokal</string>
 </resources>

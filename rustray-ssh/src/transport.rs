@@ -167,7 +167,7 @@ pub async fn open_transport(
 
     match mode.as_str() {
         "direct" | "" => Ok(Box::new(tcp)),
-        "payload" | "proxy" => {
+        "payload" | "proxy" | "v2ray_payload" => {
             let stream: BoxedStream = Box::new(tcp);
             send_http_payload(stream, cfg, proxy.as_ref()).await
         }
@@ -179,7 +179,7 @@ pub async fn open_transport(
             let tls = wrap_tls(tcp, &cfg.effective_sni()).await?;
             Ok(Box::new(tls))
         }
-        "ssl_payload" => {
+        "ssl_payload" | "v2ray_ssl_payload" => {
             let tls = wrap_tls(tcp, &cfg.effective_sni()).await?;
             let stream: BoxedStream = Box::new(tls);
             send_http_payload(stream, cfg, proxy.as_ref()).await
@@ -360,16 +360,27 @@ async fn send_http_payload(
     let mut first_req_is_head = false;
     let mut saw_first_write = false;
 
+    let mut counted_blocks = 0usize;
     for step in &steps {
         if let PayloadStep::Write(chunk) = step {
-            if !saw_first_write && !chunk.trim().is_empty() {
+            let trimmed = chunk.trim_start();
+            // Do not count trailing fake HTTP response lines (e.g. `[split]HTTP/69[crlf][crlf]`)
+            let is_fake_status = counted_blocks > 0
+                && trimmed
+                    .get(..5)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("HTTP/"));
+            if is_fake_status {
+                continue;
+            }
+            if !saw_first_write && !trimmed.is_empty() {
                 saw_first_write = true;
-                first_req_is_head = chunk
-                    .trim_start()
+                first_req_is_head = trimmed
                     .get(..5)
                     .is_some_and(|p| p.eq_ignore_ascii_case("HEAD "));
             }
-            http_blocks += chunk.matches("\r\n\r\n").count();
+            let blocks = chunk.matches("\r\n\r\n").count();
+            http_blocks += blocks;
+            counted_blocks += blocks;
         }
     }
     let expected_responses = http_blocks.clamp(1, 4);
@@ -383,12 +394,11 @@ async fn send_http_payload(
                 if chunk.is_empty() {
                     continue;
                 }
-                // Skip trailing dummy HTTP response lines placed after `[split]` in HTTP Custom
-                // templates (e.g. `[split]HTTP/enhanced 200 Ok[crlf]`) so they never leak into
-                // the upgraded SSH stream before `SSH-2.0-`.
+                // Skip trailing dummy HTTP response lines placed after `[split]` in HTTP Custom /
+                // 1FTunnel templates (e.g. `[split]HTTP/enhanced 200 Ok[crlf]` or `[split]HTTP/69[crlf][crlf]`)
+                // so they never leak into the upgraded SSH or V2Ray HTTPUpgrade stream.
                 let trimmed = chunk.trim_start();
                 let is_trailing_fake_status = completed_blocks > 0
-                    && !chunk.contains("\r\n\r\n")
                     && trimmed
                         .get(..5)
                         .is_some_and(|p| p.eq_ignore_ascii_case("HTTP/"));
@@ -442,12 +452,49 @@ async fn send_ws_upgrade(
     consume_http_responses(stream, 1, false).await
 }
 
+fn inject_v2ray_upgrade_path(expanded: String, path: &str) -> String {
+    if path.is_empty() || path == "/" || expanded.contains(path) {
+        return expanded;
+    }
+    let parts: Vec<&str> = expanded.split("\r\n\r\n").collect();
+    if parts.len() <= 1 {
+        return expanded;
+    }
+    let mut out = Vec::with_capacity(parts.len());
+    for part in parts {
+        if part.to_ascii_lowercase().contains("upgrade:") {
+            if let Some((first_line, rest)) = part.split_once("\r\n") {
+                if first_line.contains(" / ") {
+                    let patched = first_line.replacen(" / ", &format!(" {path} "), 1);
+                    out.push(format!("{patched}\r\n{rest}"));
+                    continue;
+                }
+            }
+        }
+        out.push(part.to_string());
+    }
+    out.join("\r\n\r\n")
+}
+
 fn render_payload_steps(
     template: &str,
     cfg: &SshBridgeConfig,
     proxy: Option<&ParsedProxy>,
 ) -> Vec<PayloadStep> {
-    let host_port = format!("{}:{}", cfg.host, cfg.port);
+    let is_v2ray = cfg.transport_mode.trim().to_ascii_lowercase().starts_with("v2ray_");
+    let effective_host = if is_v2ray {
+        cfg.effective_ws_host()
+    } else {
+        cfg.host.clone()
+    };
+    let effective_path = if cfg.ws_path.trim().starts_with('/') {
+        cfg.ws_path.trim().to_string()
+    } else if !cfg.ws_path.trim().is_empty() {
+        format!("/{}", cfg.ws_path.trim())
+    } else {
+        "/".to_string()
+    };
+    let host_port = format!("{}:{}", effective_host, cfg.port);
     let auth_header = proxy
         .and_then(|p| p.auth.as_deref())
         .filter(|a| !a.trim().is_empty())
@@ -466,7 +513,7 @@ fn render_payload_steps(
             }
         } else {
             format!(
-                "GET / HTTP/1.1[crlf]Host: {}[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]",
+                "GET {effective_path} HTTP/1.1[crlf]Host: {}[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]",
                 cfg.effective_ws_host()
             )
         }
@@ -493,13 +540,20 @@ fn render_payload_steps(
         .replace("[method]", "CONNECT")
         .replace("[host_port]", &host_port)
         .replace("[ssh]", &host_port)
-        .replace("[host]", &cfg.host)
+        .replace("[host]", &effective_host)
         .replace("[port]", &cfg.port.to_string())
+        .replace("[path]", &effective_path)
         .replace("[ws_host]", &cfg.effective_ws_host())
         .replace("[sni]", &cfg.effective_sni())
         .replace("[protocol]", "HTTP/1.1")
         .replace("[ua]", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
         .replace("[auth]", &auth_header);
+
+    let expanded = if is_v2ray {
+        inject_v2ray_upgrade_path(expanded, &effective_path)
+    } else {
+        expanded
+    };
 
     let mut steps = Vec::new();
     for (d_idx, delay_part) in expanded.split(DELAY_SPLIT).enumerate() {

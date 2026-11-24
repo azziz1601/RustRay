@@ -83,6 +83,7 @@ data class Profile(
     val sshUdpgwPort: Int = 7300,
     val sshPoolSize: Int = 1,
     val sshEnhanced: Boolean = false,
+    val v2rayCustomPayload: Boolean = false,
     val importedConfig: String? = null,
     val plaintext: Boolean = false,
     val rrBlobBase64: String = "",
@@ -127,6 +128,7 @@ data class Profile(
         .put("sshUdpgwPort", sshUdpgwPort)
         .put("sshPoolSize", sshPoolSize)
         .put("sshEnhanced", sshEnhanced)
+        .put("v2rayCustomPayload", v2rayCustomPayload)
         .put("plaintext", plaintext)
         .put("rrBlobBase64", rrBlobBase64)
         .put("rrLockServer", rrLockServer)
@@ -164,6 +166,7 @@ data class Profile(
             sshUdpgwPort = json.optInt("sshUdpgwPort", 7300).coerceIn(1, 65535),
             sshPoolSize = json.optInt("sshPoolSize", 1).coerceIn(1, 4),
             sshEnhanced = json.optBoolean("sshEnhanced", false),
+            v2rayCustomPayload = json.optBoolean("v2rayCustomPayload", false),
             importedConfig = json.optString("importedConfig")
                 .takeIf { it.isNotEmpty() && it != "null" },
             plaintext = json.optBoolean("plaintext", false),

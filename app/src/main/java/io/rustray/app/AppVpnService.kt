@@ -122,7 +122,7 @@ class AppVpnService : XrayVpnService() {
         currentProfile = profile
         VpnState.connecting(profile)
         syncExternalSurfaces()
-        val viaProxy = if (profile.protocol == Protocol.SSH &&
+        val viaProxy = if ((profile.protocol == Protocol.SSH || profile.v2rayCustomPayload) &&
             !profile.rrLockPayload &&
             profile.sshProxy.isNotBlank()
         ) {
@@ -185,8 +185,62 @@ class AppVpnService : XrayVpnService() {
             return
         }
 
+        val resolved = try {
+            RrConfigCodec.resolveForConnect(profile)
+        } catch (error: Throwable) {
+            fail("Cannot resolve config: ${safeMessage(error)}")
+            return
+        }
+
+        if (resolved.network == Network.HTTPUPGRADE && resolved.v2rayCustomPayload) {
+            Thread({
+                val bridgePort = try {
+                    RustSshBridge.startPayloadBridge(resolved, this)
+                } catch (error: Throwable) {
+                    if (connectGeneration.get() != attemptGen) {
+                        return@Thread
+                    }
+                    fail("Payload bridge error: ${safeMessage(error)}")
+                    return@Thread
+                }
+                if (connectGeneration.get() != attemptGen ||
+                    VpnState.phase != VpnPhase.CONNECTING ||
+                    currentProfile?.id != profile.id
+                ) {
+                    RustSshBridge.stop()
+                    return@Thread
+                }
+                EventLog.add("HTTPUpgrade custom payload bridge ready on 127.0.0.1:$bridgePort")
+                val config = try {
+                    ConfigBuilder.configForV2rayPayload(resolved, bridgePort, settings)
+                } catch (error: Throwable) {
+                    RustSshBridge.stop()
+                    if (connectGeneration.get() == attemptGen) {
+                        fail("Cannot build config: ${safeMessage(error)}")
+                    }
+                    return@Thread
+                }
+                if (connectGeneration.get() != attemptGen) {
+                    RustSshBridge.stop()
+                    return@Thread
+                }
+                try {
+                    startXrayTunnel(
+                        configJson = config,
+                        tunRuntimeProfile = settings.runtimeProfile.toSdk(),
+                        tunMtu = settings.tunMtu,
+                    )
+                } catch (error: Throwable) {
+                    RustSshBridge.stop()
+                    if (connectGeneration.get() == attemptGen) {
+                        fail("Cannot start tunnel: ${safeMessage(error)}")
+                    }
+                }
+            }, "rustray-v2ray-payload").apply { isDaemon = true }.start()
+            return
+        }
+
         val config = try {
-            val resolved = RrConfigCodec.resolveForConnect(profile)
             ConfigBuilder.configFor(resolved, settings)
         } catch (error: Throwable) {
             fail("Cannot build config: ${safeMessage(error)}")

@@ -1,4 +1,5 @@
 mod config;
+mod payload_bridge;
 mod protocol;
 mod rr_crypto;
 mod socks5;
@@ -18,18 +19,30 @@ use tokio::runtime::Runtime;
 use tokio::sync::watch;
 
 use crate::config::SshBridgeConfig;
+use crate::payload_bridge::{start_payload_bridge, PayloadBridgeStats};
 use crate::socks5::start_socks5_server;
 use crate::ssh_pool::SshPool;
 use crate::stats::BridgeStats;
 use crate::transport::SocketProtector;
 use crate::udpgw_client::UdpgwClient;
 
-struct RunningBridge {
+struct RunningSshBridge {
     shutdown_tx: watch::Sender<bool>,
     pool: Arc<SshPool>,
     udpgw: Arc<UdpgwClient>,
     stats: Arc<BridgeStats>,
     _runtime: Runtime,
+}
+
+struct RunningPayloadBridge {
+    shutdown_tx: watch::Sender<bool>,
+    stats: Arc<PayloadBridgeStats>,
+    _runtime: Runtime,
+}
+
+enum RunningBridge {
+    Ssh(RunningSshBridge),
+    Payload(RunningPayloadBridge),
 }
 
 static STATE: OnceLock<Mutex<Option<RunningBridge>>> = OnceLock::new();
@@ -215,13 +228,13 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStart(
     match start_res {
         Ok((port, udpgw)) => {
             if let Ok(mut guard) = state().lock() {
-                *guard = Some(RunningBridge {
+                *guard = Some(RunningBridge::Ssh(RunningSshBridge {
                     shutdown_tx,
                     pool,
                     udpgw,
                     stats,
                     _runtime: runtime,
-                });
+                }));
             }
             port as jint
         }
@@ -295,12 +308,113 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStop(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeStartPayloadBridge(
+    mut env: JNIEnv,
+    _class: JClass,
+    config_json: JString,
+    protector_obj: JObject,
+) -> jint {
+    init_logger();
+
+    let json_str: String = match env.get_string(&config_json) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Invalid config string: {e}"));
+            return -1;
+        }
+    };
+
+    let cfg: SshBridgeConfig = match serde_json::from_str(&json_str) {
+        Ok(c) => c,
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Invalid payload bridge config JSON: {e}"));
+            return -1;
+        }
+    };
+
+    let vm = match env.get_java_vm() {
+        Ok(vm) => Arc::new(vm),
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Failed to get JavaVM: {e}"));
+            return -1;
+        }
+    };
+
+    let protector_ref: GlobalRef = match env.new_global_ref(protector_obj) {
+        Ok(r) => r,
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Failed to pin socket protector: {e}"));
+            return -1;
+        }
+    };
+
+    let protector: SocketProtector = Arc::new(move |fd: i32| -> bool {
+        let Ok(mut guard) = vm.attach_current_thread() else {
+            return false;
+        };
+        guard
+            .call_method(
+                protector_ref.as_obj(),
+                "protectSocket",
+                "(I)Z",
+                &[JValue::Int(fd)],
+            )
+            .and_then(|v| v.z())
+            .unwrap_or(false)
+    });
+
+    stop_existing();
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .thread_name("rustray-payload")
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            throw_runtime(&mut env, &format!("Failed to start Tokio runtime: {e}"));
+            return -1;
+        }
+    };
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let stats = Arc::new(PayloadBridgeStats::new());
+
+    let start_res = runtime.block_on(start_payload_bridge(
+        Arc::new(cfg),
+        protector,
+        Arc::clone(&stats),
+        shutdown_rx,
+    ));
+
+    match start_res {
+        Ok(port) => {
+            if let Ok(mut guard) = state().lock() {
+                *guard = Some(RunningBridge::Payload(RunningPayloadBridge {
+                    shutdown_tx,
+                    stats,
+                    _runtime: runtime,
+                }));
+            }
+            port as jint
+        }
+        Err(err) => {
+            let _ = shutdown_tx.send(true);
+            drop(runtime);
+            throw_runtime(&mut env, &err.to_string());
+            -1
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeRebind(
     _env: JNIEnv,
     _class: JClass,
 ) {
     if let Ok(guard) = state().lock() {
-        if let Some(running) = guard.as_ref() {
+        if let Some(RunningBridge::Ssh(running)) = guard.as_ref() {
             running.udpgw.trigger_rebind();
             let pool = Arc::clone(&running.pool);
             running._runtime.spawn(async move {
@@ -318,7 +432,12 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeGetStats(
     let text = state()
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().map(|r| r.stats.summary()))
+        .and_then(|g| {
+            g.as_ref().map(|r| match r {
+                RunningBridge::Ssh(s) => s.stats.summary(),
+                RunningBridge::Payload(p) => p.stats.summary(),
+            })
+        })
         .unwrap_or_default();
     env.new_string(text)
         .map(|s| s.into_raw())
@@ -328,8 +447,16 @@ pub extern "system" fn Java_io_rustray_app_RustSshBridge_nativeGetStats(
 fn stop_existing() {
     if let Ok(mut guard) = state().lock() {
         if let Some(running) = guard.take() {
-            let _ = running.shutdown_tx.send(true);
-            drop(running);
+            match running {
+                RunningBridge::Ssh(s) => {
+                    let _ = s.shutdown_tx.send(true);
+                    drop(s);
+                }
+                RunningBridge::Payload(p) => {
+                    let _ = p.shutdown_tx.send(true);
+                    drop(p);
+                }
+            }
         }
     }
 }

@@ -210,6 +210,28 @@ object ConfigBuilder {
         return PlaintextVlessCompat.rewriteConfig(root.toString(2))
     }
 
+    /**
+     * Builds an Xray TUN config whose VLESS/VMess/Trojan outbound connects via raw TCP to the
+     * local Rust custom-payload HTTPUpgrade bridge on 127.0.0.1:[bridgePort].
+     */
+    fun configForV2rayPayload(
+        profile: Profile,
+        bridgePort: Int,
+        settings: AppSettings = AppSettings(),
+    ): String {
+        val bridgedProfile = profile.copy(
+            server = "127.0.0.1",
+            port = bridgePort,
+            network = Network.TCP,
+            security = Security.NONE,
+            importedConfig = null,
+            plaintext = false,
+        )
+        val root = build(bridgedProfile)
+        applySettings(root, settings)
+        return root.toString(2)
+    }
+
     fun configForSsh(socksPort: Int, settings: AppSettings = AppSettings()): String {
         val inbound = JSONObject()
             .put("tag", "tun-in")
