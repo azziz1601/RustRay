@@ -21,7 +21,7 @@ android {
         applicationId = "io.rustray.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
+        versionCode = 14
         versionName = "1.2.7"
         resourceConfigurations += listOf("en", "in", "id")
     }
